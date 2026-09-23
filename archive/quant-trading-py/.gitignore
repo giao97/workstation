@@ -1,0 +1,27 @@
+# Local secrets
+.env
+
+# Runtime artifacts
+/data/
+/data_storage/
+/logs/
+/reports/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

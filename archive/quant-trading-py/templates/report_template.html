@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>量化交易日报 - {{ date }}</title>
+  <script src="https://unpkg.com/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f172a;color:#e2e8f0;line-height:1.6;padding:20px}
+    .container{max-width:1400px;margin:0 auto}
+    h1{font-size:28px;color:#38bdf8;margin-bottom:8px}
+    .subtitle{color:#94a3b8;font-size:14px;margin-bottom:24px}
+    .section{background:#1e293b;border-radius:12px;padding:20px;margin-bottom:20px;border:1px solid #334155}
+    .section h2{font-size:18px;color:#7dd3fc;margin-bottom:16px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(400px,1fr));gap:16px}
+    .card{background:#0f172a;border-radius:10px;padding:16px;border:1px solid #334155}
+    .card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+    .symbol{font-size:20px;font-weight:700;color:#f8fafc}
+    .badge{padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600}
+    .badge-buy{background:#065f46;color:#34d399}
+    .badge-sell{background:#7f1d1d;color:#f87171}
+    .badge-hold{background:#713f12;color:#fbbf24}
+    .price-row{display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap}
+    .price-item{display:flex;flex-direction:column}
+    .price-label{font-size:11px;color:#94a3b8;text-transform:uppercase}
+    .price-value{font-size:16px;font-weight:600}
+    .price-up{color:#34d399}
+    .price-down{color:#f87171}
+    .signals{display:flex;flex-direction:column;gap:6px}
+    .signal{font-size:13px;padding:6px 10px;border-radius:6px;background:#1e293b;display:flex;gap:8px;align-items:center}
+    .signal-type{font-weight:700;min-width:36px}
+    .signal-buy{color:#34d399}
+    .signal-sell{color:#f87171}
+    .levels{display:flex;gap:12px;margin-top:12px;padding-top:12px;border-top:1px solid #334155}
+    .level{text-align:center}
+    .level-label{font-size:11px;color:#94a3b8}
+    .level-value{font-size:14px;font-weight:600}
+    .level-stop{color:#f87171}
+    .level-profit{color:#34d399}
+    .score-bar{display:flex;align-items:center;gap:8px;margin-top:8px}
+    .score-track{flex:1;height:6px;background:#334155;border-radius:3px;overflow:hidden}
+    .score-fill{height:100%;border-radius:3px}
+    .score-fill-good{background:#34d399}
+    .score-fill-mid{background:#fbbf24}
+    .score-fill-bad{background:#f87171}
+    .news-list{display:flex;flex-direction:column;gap:10px}
+    .news-item{padding:12px;background:#0f172a;border-radius:8px;border-left:3px solid #334155}
+    .news-item.positive{border-left-color:#34d399}
+    .news-item.negative{border-left-color:#f87171}
+    .news-title{font-size:14px;font-weight:600;margin-bottom:4px}
+    .news-meta{font-size:12px;color:#94a3b8;display:flex;gap:12px}
+    .sentiment-score{font-size:24px;font-weight:700}
+    .sentiment-positive{color:#34d399}
+    .sentiment-negative{color:#f87171}
+    .sentiment-neutral{color:#fbbf24}
+    .summary-box{background:#0f172a;padding:16px;border-radius:8px;margin-top:12px;white-space:pre-wrap;font-size:14px;line-height:1.8}
+    .tech-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px}
+    .tech-item{text-align:center;padding:8px;background:#1e293b;border-radius:6px}
+    .tech-label{font-size:11px;color:#94a3b8}
+    .tech-value{font-size:14px;font-weight:600}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>?? 量化交易日报</h1>
+    <p class="subtitle">日期: {{ date }} | 数据覆盖: A股 + 美股</p>
+
+    <div class="section">
+      <h2>?? 市场情绪概览</h2>
+      <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap">
+        <div>
+          <div class="sentiment-score {% if sentiment.combined_score > 1 %}sentiment-positive{% elif sentiment.combined_score < -1 %}sentiment-negative{% else %}sentiment-neutral{% endif %}">
+            {% if sentiment.combined_score > 0 %}+{% endif %}{{ sentiment.combined_score }}
+          </div>
+          <div style="font-size:12px;color:#94a3b8">综合情绪得分</div>
+        </div>
+        <div style="flex:1;min-width:300px">
+          <div style="display:flex;gap:16px;margin-bottom:8px">
+            <div><span style="color:#94a3b8">整体判断:</span> <strong>{{ sentiment.overall }}</strong></div>
+            <div><span style="color:#94a3b8">新闻情绪:</span> {{ sentiment.news_score }}</div>
+            <div><span style="color:#94a3b8">政策情绪:</span> {{ sentiment.policy_score }}</div>
+          </div>
+          <div class="summary-box">{{ sentiment.summary }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>?? 个股分析与交易信号</h2>
+      <div class="grid">
+        {% for r in results %}
+        <div class="card">
+          <div class="card-header">
+            <span class="symbol">{{ r.code }} <span style="font-size:14px;color:#94a3b8">{{ r.name }}</span></span>
+            <span class="badge badge-{% if 'BUY' in r.signal.overall_signal %}buy{% elif 'SELL' in r.signal.overall_signal %}sell{% else %}hold{% endif %}">
+              {{ r.signal.overall_signal }}
+            </span>
+          </div>
+          <div class="price-row">
+            <div class="price-item"><span class="price-label">当前价</span><span class="price-value">{{ r.technical.close|default('-') }}</span></div>
+            <div class="price-item"><span class="price-label">基本面评分</span><span class="price-value">{{ r.fundamental.total_score|default(50) }}/100</span></div>
+          </div>
+          <div class="score-bar">
+            <div class="score-track">
+              <div class="score-fill {% if r.fundamental.total_score >= 70 %}score-fill-good{% elif r.fundamental.total_score >= 45 %}score-fill-mid{% else %}score-fill-bad{% endif %}" style="width:{{ r.fundamental.total_score|default(50) }}%"></div>
+            </div>
+          </div>
+          <div class="tech-grid" style="margin-top:12px">
+            <div class="tech-item"><div class="tech-label">RSI(14)</div><div class="tech-value">{{ r.technical.rsi|default('-') }}</div></div>
+            <div class="tech-item"><div class="tech-label">MA20</div><div class="tech-value">{{ r.technical.ma20|default('-') }}</div></div>
+            <div class="tech-item"><div class="tech-label">MACD</div><div class="tech-value">{{ r.technical.macd|default('-') }}</div></div>
+            <div class="tech-item"><div class="tech-label">布林带</div><div class="tech-value">{{ r.technical.bb_upper|default('-') }}</div></div>
+            <div class="tech-item"><div class="tech-label">KDJ-K</div><div class="tech-value">{{ r.technical.kdj_k|default('-') }}</div></div>
+            <div class="tech-item"><div class="tech-label">ATR(14)</div><div class="tech-value">{{ r.technical.atr|default('-') }}</div></div>
+          </div>
+          <div class="signals" style="margin-top:12px">
+            {% for s in r.signal.signals[:5] %}
+            <div class="signal">
+              <span class="signal-type {% if s.type == 'BUY' %}signal-buy{% else %}signal-sell{% endif %}">{{ s.type }}</span>
+              <span>{{ s.reason }}</span>
+              <span style="color:#94a3b8;font-size:11px">{{ s.source }}·{{ s.confidence }}</span>
+            </div>
+            {% endfor %}
+          </div>
+          <div class="levels">
+            <div class="level"><div class="level-label">止损位</div><div class="level-value level-stop">{{ r.signal.stop_loss|default('-') }}</div></div>
+            <div class="level"><div class="level-label">止盈位</div><div class="level-value level-profit">{{ r.signal.take_profit|default('-') }}</div></div>
+            <div class="level"><div class="level-label">盈亏比</div><div class="level-value">{{ r.signal.risk_reward_ratio|default('-') }}</div></div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</body>
+</html>

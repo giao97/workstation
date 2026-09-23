@@ -1,0 +1,28 @@
+# Local secrets (keep examples in version control)
+**/.env
+**/.env.*
+!**/.env.example
+
+# Preserved metadata from the former nested repositories
+/.nested-git-backup/
+
+# Python caches and local environments
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.venv/
+**/venv/
+
+# Node dependencies and generated builds
+**/node_modules/
+**/dist/
+**/build/
+
+# IDE and operating-system files
+**/.idea/
+**/.vscode/
+**/Thumbs.db
+**/.DS_Store
+
