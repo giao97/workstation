@@ -61,6 +61,23 @@ P6_SIGNAL_LINKED_SCHEMAS = (
     "PortfolioDecisionSignalRiskItem",
     "PortfolioRiskResponse",
 )
+PORTFOLIO_ALLOCATION_PATHS = (
+    "/api/v1/portfolio/allocation-plans",
+    "/api/v1/portfolio/allocation-plans/{plan_id}",
+    "/api/v1/portfolio/allocation-plans/{plan_id}/status",
+)
+PORTFOLIO_ALLOCATION_SCHEMAS = (
+    "PortfolioAllocationMatchedPosition",
+    "PortfolioAllocationPlanItem",
+    "PortfolioAllocationPlanListResponse",
+    "PortfolioAllocationPlanSummary",
+    "PortfolioAllocationPlanWriteRequest",
+    "PortfolioAllocationStatusResponse",
+    "PortfolioAllocationTargetInput",
+    "PortfolioAllocationTargetItem",
+    "PortfolioAllocationTargetStatus",
+    "PortfolioAllocationUnassignedPosition",
+)
 
 
 def _collect_component_schema_refs(node: Any) -> set[str]:
@@ -230,6 +247,10 @@ def test_decision_signal_static_api_spec_matches_runtime_paths() -> None:
     for path in P6_SIGNAL_LINKED_PATHS:
         assert static_spec["paths"][path] == runtime_spec["paths"][path]
     for schema_name in P6_SIGNAL_LINKED_SCHEMAS:
+        assert static_spec["components"]["schemas"][schema_name] == runtime_spec["components"]["schemas"][schema_name]
+    for path in PORTFOLIO_ALLOCATION_PATHS:
+        assert static_spec["paths"][path] == runtime_spec["paths"][path]
+    for schema_name in PORTFOLIO_ALLOCATION_SCHEMAS:
         assert static_spec["components"]["schemas"][schema_name] == runtime_spec["components"]["schemas"][schema_name]
     schema_refs = _collect_component_schema_refs(static_spec)
     missing_schema_refs = sorted(schema_refs - set(static_spec["components"]["schemas"]))

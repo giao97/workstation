@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- [新功能] 新增版本化目标配置与再平衡引擎，支持持仓、现金和手工资产三种当前金额来源，输出目标缺口、超配状态、未归类持仓与受批次上限约束的配置建议金额。
+- [新功能] 新增 Portfolio allocation plan CRUD 与状态评估 API；未知手工资产、缺价或陈旧汇率会显式降级为 review/partial，不按零持仓生成交易建议。
+- [测试] 增加目标配置纯计算、计划持久化、版本递增、缺失资产、未归类持仓和 Portfolio API 回归测试。
+- [文档] 增加目标配置引擎使用说明与100万元方案示例，明确建议金额仅为配置层上限，不包含市场择时或自动交易。
 - [新功能] A 股 AkShare、港股 Futu OpenD 和美股/港股 yfinance 基本面适配器新增最多 12 期三张表标准化映射，保留提供方、币种、报告期和可用披露时间。
 - [新功能] 新增不可变财务版本表、内容哈希去重、修订链和 `as_of` 历史查询；Pipeline 在基本面快照之后 fail-open 写入标准财务版本。
 - [新功能] 新增 1.0 版 Standard 个股报告契约，以 13 个固定章节显式区分 available、limited 和 missing，缺失的同业、事件、预测或条件价格数据不由模型补造。

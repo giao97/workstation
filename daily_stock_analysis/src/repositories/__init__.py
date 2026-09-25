@@ -12,6 +12,7 @@ from src.repositories.analysis_repo import AnalysisRepository
 from src.repositories.backtest_repo import BacktestRepository
 from src.repositories.decision_signal_repo import DecisionSignalRepository
 from src.repositories.decision_signal_outcome_repo import DecisionSignalOutcomeRepository
+from src.repositories.portfolio_allocation_repo import PortfolioAllocationRepository
 from src.repositories.stock_repo import StockRepository
 from src.repositories.skill_opinion_sample_repo import SkillOpinionSampleRepository
 
@@ -20,6 +21,7 @@ __all__ = [
     "BacktestRepository",
     "DecisionSignalRepository",
     "DecisionSignalOutcomeRepository",
+    "PortfolioAllocationRepository",
     "StockRepository",
     "SkillOpinionSampleRepository",
 ]

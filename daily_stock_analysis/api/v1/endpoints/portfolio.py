@@ -34,7 +34,12 @@ from api.v1.schemas.portfolio import (
     PortfolioSnapshotResponse,
     PortfolioTradeListResponse,
     PortfolioTradeCreateRequest,
+    PortfolioAllocationPlanItem,
+    PortfolioAllocationPlanListResponse,
+    PortfolioAllocationPlanWriteRequest,
+    PortfolioAllocationStatusResponse,
 )
+from src.services.portfolio_allocation_service import PortfolioAllocationService
 from src.services.task_queue import get_task_queue
 from src.services.portfolio_import_service import PortfolioImportService
 from src.services.portfolio_risk_service import PortfolioRiskService
@@ -439,6 +444,139 @@ def get_snapshot(
         raise _bad_request(exc)
     except Exception as exc:
         raise _internal_error("Get snapshot failed", exc)
+
+
+@router.post(
+    "/allocation-plans",
+    response_model=PortfolioAllocationPlanItem,
+    responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="Create a versioned portfolio target-allocation plan",
+)
+def create_allocation_plan(request: PortfolioAllocationPlanWriteRequest) -> PortfolioAllocationPlanItem:
+    service = PortfolioAllocationService()
+    try:
+        payload = request.model_dump()
+        data = service.create_plan(**payload)
+        return PortfolioAllocationPlanItem(**data)
+    except ValueError as exc:
+        raise _bad_request(exc)
+    except Exception as exc:
+        raise _internal_error("Create allocation plan failed", exc)
+
+
+@router.get(
+    "/allocation-plans",
+    response_model=PortfolioAllocationPlanListResponse,
+    responses={500: {"model": ErrorResponse}},
+    summary="List portfolio target-allocation plans",
+)
+def list_allocation_plans(
+    include_inactive: bool = Query(False, description="Whether to include inactive plans"),
+) -> PortfolioAllocationPlanListResponse:
+    service = PortfolioAllocationService()
+    try:
+        return PortfolioAllocationPlanListResponse(
+            plans=service.list_plans(include_inactive=include_inactive)
+        )
+    except Exception as exc:
+        raise _internal_error("List allocation plans failed", exc)
+
+
+@router.get(
+    "/allocation-plans/{plan_id}",
+    response_model=PortfolioAllocationPlanItem,
+    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="Get a portfolio target-allocation plan",
+)
+def get_allocation_plan(plan_id: int) -> PortfolioAllocationPlanItem:
+    service = PortfolioAllocationService()
+    try:
+        data = service.get_plan(plan_id)
+        if data is None:
+            raise api_error(404, "not_found", f"Allocation plan not found: {plan_id}")
+        return PortfolioAllocationPlanItem(**data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _internal_error("Get allocation plan failed", exc)
+
+
+@router.put(
+    "/allocation-plans/{plan_id}",
+    response_model=PortfolioAllocationPlanItem,
+    responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="Replace a target-allocation plan and increment its version",
+)
+def update_allocation_plan(
+    plan_id: int,
+    request: PortfolioAllocationPlanWriteRequest,
+) -> PortfolioAllocationPlanItem:
+    service = PortfolioAllocationService()
+    try:
+        data = service.update_plan(plan_id, **request.model_dump())
+        if data is None:
+            raise api_error(404, "not_found", f"Allocation plan not found: {plan_id}")
+        return PortfolioAllocationPlanItem(**data)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise _bad_request(exc)
+    except Exception as exc:
+        raise _internal_error("Update allocation plan failed", exc)
+
+
+@router.delete(
+    "/allocation-plans/{plan_id}",
+    response_model=PortfolioDeleteResponse,
+    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="Deactivate a portfolio target-allocation plan",
+)
+def delete_allocation_plan(plan_id: int) -> PortfolioDeleteResponse:
+    service = PortfolioAllocationService()
+    try:
+        if not service.deactivate_plan(plan_id):
+            raise api_error(404, "not_found", f"Allocation plan not found: {plan_id}")
+        return PortfolioDeleteResponse(deleted=1)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _internal_error("Deactivate allocation plan failed", exc)
+
+
+@router.get(
+    "/allocation-plans/{plan_id}/status",
+    response_model=PortfolioAllocationStatusResponse,
+    responses={400: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="Evaluate allocation gaps and capped next-batch amounts",
+)
+def get_allocation_plan_status(
+    plan_id: int,
+    account_id: Optional[int] = Query(None, description="Optional account id; default uses all active accounts"),
+    as_of: Optional[date] = Query(None, description="Evaluation date, default today"),
+    cost_method: str = Query("fifo", description="Cost method: fifo or avg"),
+    include_realtime: bool = Query(
+        True,
+        description="Whether today's evaluation should try realtime quotes before close fallback",
+    ),
+) -> PortfolioAllocationStatusResponse:
+    service = PortfolioAllocationService()
+    try:
+        data = service.evaluate_plan(
+            plan_id,
+            account_id=account_id,
+            as_of=as_of,
+            cost_method=cost_method,
+            include_realtime=include_realtime,
+        )
+        if data is None:
+            raise api_error(404, "not_found", f"Allocation plan not found: {plan_id}")
+        return PortfolioAllocationStatusResponse(**data)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise _bad_request(exc)
+    except Exception as exc:
+        raise _internal_error("Evaluate allocation plan failed", exc)
 
 
 @router.post(

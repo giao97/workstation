@@ -294,3 +294,118 @@ class PortfolioRiskResponse(BaseModel):
     drawdown: Dict[str, Any] = Field(default_factory=dict)
     stop_loss: Dict[str, Any] = Field(default_factory=dict)
     decision_signal_risk: PortfolioDecisionSignalRiskBlock = Field(default_factory=PortfolioDecisionSignalRiskBlock)
+
+
+class PortfolioAllocationTargetInput(BaseModel):
+    key: str = Field(..., min_length=1, max_length=64)
+    name: str = Field(..., min_length=1, max_length=96)
+    source: Literal["position", "cash", "manual"] = "position"
+    policy: Literal["buy_only", "rebalance", "hold_only", "exit_only"] = "buy_only"
+    market: Optional[Literal["cn", "hk", "us", "jp", "kr", "tw"]] = None
+    symbols: List[str] = Field(default_factory=list)
+    target_pct: float = Field(..., ge=0, le=100)
+    min_pct: Optional[float] = Field(None, ge=0, le=100)
+    max_pct: Optional[float] = Field(None, ge=0, le=100)
+    batch_amount: Optional[float] = Field(None, gt=0)
+    current_amount: Optional[float] = Field(None, ge=0)
+    sort_order: int = 0
+    note: Optional[str] = Field(None, max_length=500)
+
+
+class PortfolioAllocationPlanWriteRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=96)
+    owner_id: Optional[str] = Field(None, max_length=64)
+    base_currency: str = Field("CNY", min_length=3, max_length=8)
+    target_total_value: float = Field(..., gt=0)
+    targets: List[PortfolioAllocationTargetInput] = Field(..., min_length=1)
+
+
+class PortfolioAllocationTargetItem(PortfolioAllocationTargetInput):
+    id: int
+
+
+class PortfolioAllocationPlanItem(BaseModel):
+    id: int
+    owner_id: Optional[str] = None
+    name: str
+    base_currency: str
+    target_total_value: float
+    version: int
+    is_active: bool
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    targets: List[PortfolioAllocationTargetItem] = Field(default_factory=list)
+
+
+class PortfolioAllocationPlanSummary(BaseModel):
+    id: int
+    owner_id: Optional[str] = None
+    name: str
+    base_currency: str
+    target_total_value: float
+    version: int
+    is_active: bool
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class PortfolioAllocationPlanListResponse(BaseModel):
+    plans: List[PortfolioAllocationPlanSummary] = Field(default_factory=list)
+
+
+class PortfolioAllocationMatchedPosition(BaseModel):
+    symbol: str
+    market: str
+    current_amount: float
+    price_available: bool
+    price_stale: bool = False
+
+
+class PortfolioAllocationTargetStatus(BaseModel):
+    key: str
+    name: str
+    source: str
+    policy: str
+    market: Optional[str] = None
+    symbols: List[str] = Field(default_factory=list)
+    target_pct: float
+    target_amount: float
+    current_pct: Optional[float] = None
+    current_amount: Optional[float] = None
+    gap_amount: Optional[float] = None
+    min_pct: Optional[float] = None
+    max_pct: Optional[float] = None
+    batch_amount: Optional[float] = None
+    band_status: Literal["below_min", "inside_band", "above_max", "unknown"]
+    action: Literal["add", "hold", "reduce", "review"]
+    recommended_amount: float
+    reason: str
+    data_complete: bool
+    limitations: List[str] = Field(default_factory=list)
+    matched_positions: List[PortfolioAllocationMatchedPosition] = Field(default_factory=list)
+
+
+class PortfolioAllocationUnassignedPosition(BaseModel):
+    symbol: str
+    market: str
+    current_amount: float
+    price_available: bool
+
+
+class PortfolioAllocationStatusResponse(BaseModel):
+    plan_id: int
+    plan_name: str
+    plan_version: int
+    base_currency: str
+    target_total_value: float
+    as_of: Optional[str] = None
+    account_id: Optional[int] = None
+    cost_method: str
+    include_realtime: bool
+    data_quality: Literal["ok", "partial"]
+    limitations: List[str] = Field(default_factory=list)
+    known_current_amount: float
+    unassigned_current_amount: float
+    unassigned_positions: List[PortfolioAllocationUnassignedPosition] = Field(default_factory=list)
+    targets: List[PortfolioAllocationTargetStatus] = Field(default_factory=list)
+    disclosures: List[str] = Field(default_factory=list)

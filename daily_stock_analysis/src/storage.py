@@ -65,6 +65,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 CURRENT_SCHEMA_VERSION = "2026-06-05-create-all-baseline"
 FINANCIAL_RESEARCH_SCHEMA_VERSION = "2026-08-30-financial-research-snapshots-v1"
+PORTFOLIO_ALLOCATION_SCHEMA_VERSION = "2026-09-25-portfolio-allocation-plan-v1"
 INTELLIGENCE_ITEM_NULL_SCOPE_VALUE = "__dsa_null_scope__"
 
 # SQLAlchemy ORM 基类
@@ -761,6 +762,61 @@ class PortfolioFxRate(Base):
     )
 
 
+class PortfolioAllocationPlan(Base):
+    """Versioned target allocation plan; never an order-routing instruction."""
+
+    __tablename__ = 'portfolio_allocation_plans'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    owner_id = Column(String(64), index=True)
+    name = Column(String(96), nullable=False)
+    base_currency = Column(String(8), nullable=False, default='CNY')
+    target_total_value = Column(Float, nullable=False)
+    version = Column(Integer, nullable=False, default=1)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.now, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint('target_total_value > 0', name='ck_portfolio_allocation_plan_total_positive'),
+        Index('ix_portfolio_allocation_plan_owner_active', 'owner_id', 'is_active'),
+    )
+
+
+class PortfolioAllocationTarget(Base):
+    """One independently measurable bucket inside an allocation plan."""
+
+    __tablename__ = 'portfolio_allocation_targets'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    plan_id = Column(Integer, ForeignKey('portfolio_allocation_plans.id'), nullable=False, index=True)
+    target_key = Column(String(64), nullable=False)
+    name = Column(String(96), nullable=False)
+    source = Column(String(16), nullable=False, default='position')  # position/cash/manual
+    policy = Column(String(16), nullable=False, default='buy_only')  # buy_only/rebalance/hold_only/exit_only
+    market = Column(String(8))
+    symbols_json = Column(Text, nullable=False, default='[]')
+    target_pct = Column(Float, nullable=False)
+    min_pct = Column(Float)
+    max_pct = Column(Float)
+    batch_amount = Column(Float)
+    current_amount = Column(Float)
+    sort_order = Column(Integer, nullable=False, default=0)
+    note = Column(String(500))
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint('plan_id', 'target_key', name='uix_portfolio_allocation_target_key'),
+        CheckConstraint('target_pct >= 0 AND target_pct <= 100', name='ck_portfolio_allocation_target_pct'),
+        CheckConstraint('min_pct IS NULL OR (min_pct >= 0 AND min_pct <= 100)', name='ck_portfolio_allocation_min_pct'),
+        CheckConstraint('max_pct IS NULL OR (max_pct >= 0 AND max_pct <= 100)', name='ck_portfolio_allocation_max_pct'),
+        CheckConstraint('batch_amount IS NULL OR batch_amount > 0', name='ck_portfolio_allocation_batch_positive'),
+        CheckConstraint('current_amount IS NULL OR current_amount >= 0', name='ck_portfolio_allocation_current_nonnegative'),
+        Index('ix_portfolio_allocation_target_plan_order', 'plan_id', 'sort_order'),
+    )
+
+
 class ConversationMessage(Base):
     """
     Agent 对话历史记录表
@@ -1425,6 +1481,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             self._ensure_intelligence_item_scope_values()
             self._ensure_schema_migration_record()
             self._ensure_financial_research_schema_record()
+            self._ensure_portfolio_allocation_schema_record()
             self._ensure_intelligence_items_unique_index()
 
             self._initialized = True
@@ -1483,6 +1540,27 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 statement = statement.on_conflict_do_nothing(index_elements=["version"])
                 session.execute(statement)
             elif session.get(DatabaseSchemaMigration, FINANCIAL_RESEARCH_SCHEMA_VERSION) is None:
+                session.add(DatabaseSchemaMigration(**values))
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def _ensure_portfolio_allocation_schema_record(self) -> None:
+        """Record the additive target-allocation schema idempotently."""
+        values = {
+            "version": PORTFOLIO_ALLOCATION_SCHEMA_VERSION,
+            "description": "Add versioned portfolio allocation plans and targets",
+        }
+        session = self._SessionLocal()
+        try:
+            if self._is_sqlite_engine:
+                statement = sqlite_insert(DatabaseSchemaMigration).values(**values)
+                statement = statement.on_conflict_do_nothing(index_elements=["version"])
+                session.execute(statement)
+            elif session.get(DatabaseSchemaMigration, PORTFOLIO_ALLOCATION_SCHEMA_VERSION) is None:
                 session.add(DatabaseSchemaMigration(**values))
             session.commit()
         except Exception:

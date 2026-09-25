@@ -954,6 +954,66 @@ class PortfolioApiTestCase(unittest.TestCase):
         self.assertIn("citic", brokers)
         self.assertIn("cmb", brokers)
 
+    def test_allocation_plan_crud_and_status(self) -> None:
+        account_id = self._create_position(
+            name="US",
+            symbol="VOO",
+            quantity=1,
+            market="us",
+            currency="USD",
+        )
+        plan_payload = {
+            "name": "100w target",
+            "base_currency": "USD",
+            "target_total_value": 1_000_000,
+            "targets": [
+                {
+                    "key": "sp500",
+                    "name": "标普500",
+                    "source": "position",
+                    "policy": "buy_only",
+                    "market": "us",
+                    "symbols": ["VOO", "IVV"],
+                    "target_pct": 8,
+                    "batch_amount": 13_000,
+                },
+                {
+                    "key": "other",
+                    "name": "其他资产",
+                    "source": "manual",
+                    "policy": "hold_only",
+                    "target_pct": 92,
+                    "current_amount": 920_000,
+                },
+            ],
+        }
+        create_resp = self.client.post("/api/v1/portfolio/allocation-plans", json=plan_payload)
+        self.assertEqual(create_resp.status_code, 200, create_resp.text)
+        plan = create_resp.json()
+        self.assertEqual(plan["version"], 1)
+
+        list_resp = self.client.get("/api/v1/portfolio/allocation-plans")
+        self.assertEqual(list_resp.status_code, 200, list_resp.text)
+        self.assertEqual(len(list_resp.json()["plans"]), 1)
+
+        status_resp = self.client.get(
+            f"/api/v1/portfolio/allocation-plans/{plan['id']}/status",
+            params={
+                "account_id": account_id,
+                "as_of": "2026-01-03",
+                "include_realtime": "false",
+            },
+        )
+        self.assertEqual(status_resp.status_code, 200, status_resp.text)
+        sp500 = next(item for item in status_resp.json()["targets"] if item["key"] == "sp500")
+        self.assertEqual(sp500["action"], "add")
+        self.assertEqual(sp500["recommended_amount"], 13_000)
+
+        delete_resp = self.client.delete(f"/api/v1/portfolio/allocation-plans/{plan['id']}")
+        self.assertEqual(delete_resp.status_code, 200, delete_resp.text)
+        get_resp = self.client.get(f"/api/v1/portfolio/allocation-plans/{plan['id']}")
+        self.assertEqual(get_resp.status_code, 404)
+
     def test_event_list_invalid_page_size_returns_422(self) -> None:
         resp = self.client.get("/api/v1/portfolio/trades", params={"page_size": 101})
         self.assertEqual(resp.status_code, 422)
