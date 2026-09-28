@@ -38,7 +38,14 @@ from api.v1.schemas.portfolio import (
     PortfolioAllocationPlanListResponse,
     PortfolioAllocationPlanWriteRequest,
     PortfolioAllocationStatusResponse,
+    PortfolioOpeningRequest,
+    PortfolioOpeningCommitRequest,
+    PortfolioOpeningPreview,
+    PortfolioOpeningCommitResponse,
+    PortfolioFundingRequest,
+    PortfolioAccountStateResponse,
 )
+from src.services.portfolio_account_state_service import PortfolioAccountStateService
 from src.services.portfolio_allocation_service import PortfolioAllocationService
 from src.services.task_queue import get_task_queue
 from src.services.portfolio_import_service import PortfolioImportService
@@ -53,6 +60,38 @@ from src.services.portfolio_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _account_state_call(method, *args, **kwargs):
+    try:
+        return method(*args, **kwargs)
+    except (PortfolioConflictError, PortfolioBusyError) as exc:
+        raise _conflict_error(error="portfolio_state_conflict", message=str(exc))
+    except ValueError as exc:
+        raise _bad_request(exc)
+
+
+@router.post("/accounts/{account_id}/opening-balance/preview", response_model=PortfolioOpeningPreview)
+def preview_opening_balance(account_id: int, request: PortfolioOpeningRequest):
+    return _account_state_call(PortfolioAccountStateService().preview_opening,
+                               account_id, request.model_dump(mode="json"))
+
+
+@router.post("/accounts/{account_id}/opening-balance", response_model=PortfolioOpeningCommitResponse)
+def commit_opening_balance(account_id: int, request: PortfolioOpeningCommitRequest):
+    return _account_state_call(PortfolioAccountStateService().commit_opening,
+                               account_id, request.model_dump(mode="json"), request.preview_token)
+
+
+@router.post("/accounts/{account_id}/funding", response_model=PortfolioEventCreatedResponse)
+def record_funding_snapshot(account_id: int, request: PortfolioFundingRequest):
+    return _account_state_call(PortfolioAccountStateService().record_funding,
+                               account_id, request.model_dump(mode="json"))
+
+
+@router.get("/accounts/{account_id}/state", response_model=PortfolioAccountStateResponse)
+def get_account_state(account_id: int, as_of: Optional[date] = Query(None)):
+    return _account_state_call(PortfolioAccountStateService().get_state, account_id, as_of)
 
 
 def _bad_request(exc: Exception) -> HTTPException:
@@ -551,7 +590,7 @@ def delete_allocation_plan(plan_id: int) -> PortfolioDeleteResponse:
 )
 def get_allocation_plan_status(
     plan_id: int,
-    account_id: Optional[int] = Query(None, description="Optional account id; default uses all active accounts"),
+    account_id: Optional[int] = Query(None, description="Optional scope assertion; defaults to the plan's saved account scope"),
     as_of: Optional[date] = Query(None, description="Evaluation date, default today"),
     cost_method: str = Query("fifo", description="Cost method: fifo or avg"),
     include_realtime: bool = Query(

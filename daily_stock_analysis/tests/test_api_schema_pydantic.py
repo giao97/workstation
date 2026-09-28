@@ -62,11 +62,18 @@ P6_SIGNAL_LINKED_SCHEMAS = (
     "PortfolioRiskResponse",
 )
 PORTFOLIO_ALLOCATION_PATHS = (
+    "/api/v1/portfolio/accounts/{account_id}/opening-balance/preview",
+    "/api/v1/portfolio/accounts/{account_id}/opening-balance",
+    "/api/v1/portfolio/accounts/{account_id}/funding",
+    "/api/v1/portfolio/accounts/{account_id}/state",
     "/api/v1/portfolio/allocation-plans",
     "/api/v1/portfolio/allocation-plans/{plan_id}",
     "/api/v1/portfolio/allocation-plans/{plan_id}/status",
 )
 PORTFOLIO_ALLOCATION_SCHEMAS = (
+    "PortfolioOpeningPosition", "PortfolioOpeningRequest", "PortfolioOpeningCommitRequest",
+    "PortfolioOpeningPreview", "PortfolioOpeningCommitResponse", "PortfolioFundingRequest",
+    "PortfolioAccountStateResponse", "PortfolioAccountSnapshot",
     "PortfolioAllocationMatchedPosition",
     "PortfolioAllocationPlanItem",
     "PortfolioAllocationPlanListResponse",
@@ -252,6 +259,7 @@ def test_decision_signal_static_api_spec_matches_runtime_paths() -> None:
         assert static_spec["paths"][path] == runtime_spec["paths"][path]
     for schema_name in PORTFOLIO_ALLOCATION_SCHEMAS:
         assert static_spec["components"]["schemas"][schema_name] == runtime_spec["components"]["schemas"][schema_name]
+    assert static_spec["components"]["schemas"]["PortfolioPositionItem"] == runtime_spec["components"]["schemas"]["PortfolioPositionItem"]
     schema_refs = _collect_component_schema_refs(static_spec)
     missing_schema_refs = sorted(schema_refs - set(static_spec["components"]["schemas"]))
     assert missing_schema_refs == []

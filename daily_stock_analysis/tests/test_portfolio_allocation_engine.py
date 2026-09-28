@@ -13,6 +13,7 @@ class PortfolioAllocationEngineTest(unittest.TestCase):
             "version": 1,
             "base_currency": "CNY",
             "target_total_value": 1_000_000,
+            "ledger_complete": True,
             "targets": [
                 {
                     "key": "liquidity",
@@ -56,7 +57,7 @@ class PortfolioAllocationEngineTest(unittest.TestCase):
             normalized_snapshot={
                 "as_of": "2026-09-25",
                 "account_count": 1,
-                "cash_value": 90_000,
+                "cash_value": 150_000,
                 "positions": [
                     {
                         "symbol": "VOO",
@@ -75,7 +76,10 @@ class PortfolioAllocationEngineTest(unittest.TestCase):
         self.assertEqual(by_key["sp500"]["gap_amount"], 75_250)
         self.assertEqual(by_key["sp500"]["action"], "add")
         self.assertEqual(by_key["sp500"]["recommended_amount"], 13_000)
-        self.assertEqual(by_key["liquidity"]["action"], "add")
+        self.assertEqual(by_key["liquidity"]["action"], "hold")
+        self.assertEqual(result["available_cash"], 50_000)
+        self.assertEqual(result["total_recommended_add"], 50_000)
+        self.assertEqual(by_key["fixed_income"]["recommended_amount"], 37_000)
         self.assertEqual(result["data_quality"], "ok")
 
     def test_missing_manual_amount_requires_review(self) -> None:
@@ -97,6 +101,71 @@ class PortfolioAllocationEngineTest(unittest.TestCase):
         self.assertIsNone(fixed_income["current_amount"])
         self.assertIn("manual_current_amount_missing", fixed_income["limitations"])
         self.assertEqual(result["data_quality"], "partial")
+
+    def test_unconfirmed_ledger_is_unknown_even_with_an_account(self) -> None:
+        plan = self._plan()
+        plan["ledger_complete"] = False
+        result = evaluate_allocation_plan(plan=plan, normalized_snapshot={
+            "account_count": 1, "cash_value": 200_000, "positions": [],
+        })
+        sp500 = result["targets"][1]
+        self.assertIsNone(sp500["current_amount"])
+        self.assertIsNone(sp500["gap_amount"])
+        self.assertEqual(sp500["action"], "review")
+        self.assertIsNone(result["available_cash"])
+        self.assertEqual(result["total_recommended_add"], 0)
+
+    def test_confirmed_zero_is_distinct_from_unknown(self) -> None:
+        result = evaluate_allocation_plan(plan=self._plan(), normalized_snapshot={
+            "account_count": 1, "cash_value": 200_000, "positions": [],
+        })
+        self.assertEqual(result["targets"][1]["current_amount"], 0)
+        self.assertEqual(result["targets"][1]["action"], "add")
+
+    def test_missing_accounts_are_unknown_even_if_ledger_was_confirmed(self) -> None:
+        result = evaluate_allocation_plan(plan=self._plan(), normalized_snapshot={
+            "account_count": 0, "cash_value": 0, "positions": [],
+        })
+        for target in result["targets"]:
+            if target["source"] in {"position", "cash"}:
+                self.assertIsNone(target["current_amount"])
+                self.assertEqual(target["action"], "review")
+
+    def test_stale_quote_requires_review(self) -> None:
+        result = evaluate_allocation_plan(plan=self._plan(), normalized_snapshot={
+            "account_count": 1, "cash_value": 200_000,
+            "positions": [{"symbol": "VOO", "market": "us", "market_value_plan": 5_000,
+                           "price_available": True, "price_stale": True}],
+        })
+        self.assertEqual(result["targets"][1]["action"], "review")
+        self.assertEqual(result["targets"][1]["recommended_amount"], 0)
+
+    def test_cash_reserve_and_unsettled_reductions_do_not_fund_additions(self) -> None:
+        plan = self._plan()
+        plan["cash_reserve_amount"] = 120_000
+        plan["targets"][2]["current_amount"] = 900_000
+        result = evaluate_allocation_plan(plan=plan, normalized_snapshot={
+            "account_count": 1, "cash_value": 125_000, "positions": [],
+        })
+        self.assertEqual(result["targets"][2]["action"], "reduce")
+        self.assertEqual(result["available_cash"], 5_000)
+        self.assertEqual(result["targets"][1]["recommended_amount"], 5_000)
+        self.assertEqual(result["total_recommended_add"], 5_000)
+
+    def test_unreliable_cash_blocks_additions_but_preserves_gap(self) -> None:
+        result = evaluate_allocation_plan(plan=self._plan(), normalized_snapshot={
+            "account_count": 1, "cash_value": 200_000, "cash_reliable": False, "positions": [],
+        })
+        self.assertEqual(result["targets"][1]["gap_amount"], 80_000)
+        self.assertEqual(result["targets"][1]["action"], "review")
+        self.assertEqual(result["total_recommended_add"], 0)
+
+    def test_rebalance_inside_lower_band_holds(self) -> None:
+        result = evaluate_allocation_plan(plan=self._plan(), normalized_snapshot={
+            "account_count": 1, "cash_value": 90_000, "positions": [],
+        })
+        self.assertEqual(result["targets"][0]["action"], "hold")
+        self.assertEqual(result["targets"][0]["reason"], "inside_rebalance_band")
 
     def test_exit_policy_reduces_overweight_position(self) -> None:
         plan = self._plan()

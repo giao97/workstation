@@ -302,6 +302,38 @@ def resolve_historical_daily_bar_date(
         return None
 
 
+def is_latest_completed_close(
+    market: str, observation_date: date, *, quote_time: Optional[datetime] = None,
+    current_time: Optional[datetime] = None,
+) -> bool:
+    """Fail-closed allocation reference check, not a claim of a tradable quote.
+
+    Daily close bars need an exchange-session date; timestamped quotes must also
+    be at/after the final minute of that session (not an old intraday tick).
+    """
+    if not _XCALS_AVAILABLE or market not in MARKET_EXCHANGE:
+        return False
+    now = get_market_now(market, current_time)
+    if infer_market_phase(market, current_time=now) == MarketPhase.UNKNOWN:
+        return False
+    try:
+        if observation_date != get_effective_trading_date(market, current_time=now):
+            return False
+        cal = xcals.get_calendar(MARKET_EXCHANGE[market])
+        session = cal.date_to_session(observation_date, direction="none")
+        if quote_time is None:
+            return True
+        if quote_time.tzinfo is None or quote_time > now + timedelta(seconds=60):
+            return False
+        local_quote = get_market_now(market, quote_time)
+        close = _as_market_datetime(cal.session_close(session), MARKET_TIMEZONE[market])
+        return (local_quote.date() == observation_date and close is not None
+                and local_quote >= close - timedelta(minutes=1))
+    except Exception as exc:
+        logger.warning("Allocation close reference unavailable: %s", exc)
+        return False
+
+
 def _as_market_datetime(value: Any, tz_name: str) -> Optional[datetime]:
     """
     Convert exchange-calendar timestamps into market-local datetimes.

@@ -5306,10 +5306,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Optional account id; default uses all active accounts",
+              "description": "Optional scope assertion; defaults to the plan's saved account scope",
               "title": "Account Id"
             },
-            "description": "Optional account id; default uses all active accounts"
+            "description": "Optional scope assertion; defaults to the plan's saved account scope"
           },
           {
             "name": "as_of",
@@ -9428,6 +9428,221 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/portfolio/accounts/{account_id}/opening-balance/preview": {
+      "post": {
+        "tags": [
+          "Portfolio"
+        ],
+        "summary": "Preview Opening Balance",
+        "operationId": "preview_opening_balance_api_v1_portfolio_accounts__account_id__opening_balance_preview_post",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Account Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PortfolioOpeningRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortfolioOpeningPreview"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/portfolio/accounts/{account_id}/opening-balance": {
+      "post": {
+        "tags": [
+          "Portfolio"
+        ],
+        "summary": "Commit Opening Balance",
+        "operationId": "commit_opening_balance_api_v1_portfolio_accounts__account_id__opening_balance_post",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Account Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PortfolioOpeningCommitRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortfolioOpeningCommitResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/portfolio/accounts/{account_id}/funding": {
+      "post": {
+        "tags": [
+          "Portfolio"
+        ],
+        "summary": "Record Funding Snapshot",
+        "operationId": "record_funding_snapshot_api_v1_portfolio_accounts__account_id__funding_post",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Account Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PortfolioFundingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortfolioEventCreatedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/portfolio/accounts/{account_id}/state": {
+      "get": {
+        "tags": [
+          "Portfolio"
+        ],
+        "summary": "Get Account State",
+        "operationId": "get_account_state_api_v1_portfolio_accounts__account_id__state_get",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Account Id"
+            }
+          },
+          {
+            "name": "as_of",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "As Of"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortfolioAccountStateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -16883,6 +17098,16 @@
             "type": "number",
             "title": "Total Cash"
           },
+          "funding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortfolioAccountStateResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "total_market_value": {
             "type": "number",
             "title": "Total Market Value"
@@ -17098,6 +17323,32 @@
             "type": "number",
             "title": "Target Total Value"
           },
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "ledger_complete": {
+            "type": "boolean",
+            "title": "Ledger Complete",
+            "default": false
+          },
+          "cash_reserve_amount": {
+            "type": "number",
+            "title": "Cash Reserve Amount",
+            "default": 0
+          },
+          "include_in_reports": {
+            "type": "boolean",
+            "title": "Include In Reports",
+            "default": false
+          },
           "version": {
             "type": "integer",
             "title": "Version"
@@ -17189,6 +17440,32 @@
             "type": "number",
             "title": "Target Total Value"
           },
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "ledger_complete": {
+            "type": "boolean",
+            "title": "Ledger Complete",
+            "default": false
+          },
+          "cash_reserve_amount": {
+            "type": "number",
+            "title": "Cash Reserve Amount",
+            "default": 0
+          },
+          "include_in_reports": {
+            "type": "boolean",
+            "title": "Include In Reports",
+            "default": false
+          },
           "version": {
             "type": "integer",
             "title": "Version"
@@ -17263,6 +17540,37 @@
             "exclusiveMinimum": 0.0,
             "title": "Target Total Value"
           },
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id",
+            "description": "Fixed scope; null means all active accounts"
+          },
+          "ledger_complete": {
+            "type": "boolean",
+            "title": "Ledger Complete",
+            "description": "User confirms holdings and cash for this scope are fully recorded",
+            "default": false
+          },
+          "cash_reserve_amount": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Cash Reserve Amount",
+            "default": 0
+          },
+          "include_in_reports": {
+            "type": "boolean",
+            "title": "Include In Reports",
+            "description": "Include in daily reports sent to existing report recipients",
+            "default": false
+          },
           "targets": {
             "items": {
               "$ref": "#/components/schemas/PortfolioAllocationTargetInput"
@@ -17331,6 +17639,51 @@
           "include_realtime": {
             "type": "boolean",
             "title": "Include Realtime"
+          },
+          "ledger_complete": {
+            "type": "boolean",
+            "title": "Ledger Complete",
+            "default": false
+          },
+          "cash_reserve_amount": {
+            "type": "number",
+            "title": "Cash Reserve Amount",
+            "default": 0
+          },
+          "available_cash": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available Cash"
+          },
+          "confirmed_cash": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed Cash"
+          },
+          "funding_accounts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Funding Accounts"
+          },
+          "total_recommended_add": {
+            "type": "number",
+            "title": "Total Recommended Add",
+            "default": 0
           },
           "data_quality": {
             "type": "string",
@@ -17816,6 +18169,34 @@
           "recommended_amount": {
             "type": "number",
             "title": "Recommended Amount"
+          },
+          "allocation_cap": {
+            "type": "number",
+            "title": "Allocation Cap",
+            "default": 0
+          },
+          "funded_amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Funded Amount"
+          },
+          "is_estimate": {
+            "type": "boolean",
+            "title": "Is Estimate",
+            "default": false
+          },
+          "reference_notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reference Notes"
           },
           "reason": {
             "type": "string",
@@ -18716,6 +19097,28 @@
               }
             ],
             "title": "Price Date"
+          },
+          "price_timestamp": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Timestamp"
+          },
+          "price_fetched_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Fetched At"
           },
           "price_stale": {
             "type": "boolean",
@@ -22825,6 +23228,403 @@
         ],
         "title": "WatchlistResponse",
         "description": "自选队列响应"
+      },
+      "PortfolioAccountStateResponse": {
+        "properties": {
+          "account_id": {
+            "type": "integer",
+            "title": "Account Id"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "opening": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opening"
+          },
+          "funding": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Funding"
+          },
+          "cash_confirmed": {
+            "type": "boolean",
+            "title": "Cash Confirmed"
+          },
+          "confirmed_cash_cap": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed Cash Cap"
+          },
+          "disclosures": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Disclosures"
+          }
+        },
+        "type": "object",
+        "required": [
+          "account_id",
+          "currency",
+          "cash_confirmed"
+        ],
+        "title": "PortfolioAccountStateResponse"
+      },
+      "PortfolioFundingRequest": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date",
+            "title": "As Of"
+          },
+          "settled_cash": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settled Cash"
+          },
+          "available_cash": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Available Cash"
+          },
+          "planned_deposit": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Deposit"
+          },
+          "planned_deposit_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Deposit Date"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of"
+        ],
+        "title": "PortfolioFundingRequest"
+      },
+      "PortfolioOpeningCommitRequest": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date",
+            "title": "As Of"
+          },
+          "positions": {
+            "items": {
+              "$ref": "#/components/schemas/PortfolioOpeningPosition"
+            },
+            "type": "array",
+            "maxItems": 1000,
+            "minItems": 1,
+            "title": "Positions"
+          },
+          "cash_balance": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cash Balance"
+          },
+          "reported_market_value": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported Market Value"
+          },
+          "reported_equity": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported Equity"
+          },
+          "confirmed": {
+            "type": "boolean",
+            "const": true,
+            "title": "Confirmed"
+          },
+          "preview_token": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Preview Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "positions",
+          "confirmed",
+          "preview_token"
+        ],
+        "title": "PortfolioOpeningCommitRequest"
+      },
+      "PortfolioOpeningCommitResponse": {
+        "properties": {
+          "account_id": {
+            "type": "integer",
+            "title": "Account Id"
+          },
+          "created": {
+            "type": "boolean",
+            "title": "Created"
+          }
+        },
+        "type": "object",
+        "required": [
+          "account_id",
+          "created"
+        ],
+        "title": "PortfolioOpeningCommitResponse"
+      },
+      "PortfolioOpeningPosition": {
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "maxLength": 16,
+            "minLength": 1,
+            "title": "Symbol"
+          },
+          "quantity": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Quantity"
+          },
+          "avg_cost": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Avg Cost"
+          },
+          "reported_market_value": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported Market Value"
+          }
+        },
+        "type": "object",
+        "required": [
+          "symbol",
+          "quantity",
+          "avg_cost"
+        ],
+        "title": "PortfolioOpeningPosition"
+      },
+      "PortfolioOpeningPreview": {
+        "properties": {
+          "account_id": {
+            "type": "integer",
+            "title": "Account Id"
+          },
+          "opening": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Opening"
+          },
+          "preview_token": {
+            "type": "string",
+            "title": "Preview Token"
+          },
+          "can_commit": {
+            "type": "boolean",
+            "title": "Can Commit"
+          },
+          "detail_market_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail Market Value"
+          },
+          "market_value_difference": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Market Value Difference"
+          },
+          "equity_less_market_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Equity Less Market Value"
+          },
+          "equity_difference": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Equity Difference"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Limitations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "account_id",
+          "opening",
+          "preview_token",
+          "can_commit"
+        ],
+        "title": "PortfolioOpeningPreview"
+      },
+      "PortfolioOpeningRequest": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date",
+            "title": "As Of"
+          },
+          "positions": {
+            "items": {
+              "$ref": "#/components/schemas/PortfolioOpeningPosition"
+            },
+            "type": "array",
+            "maxItems": 1000,
+            "minItems": 1,
+            "title": "Positions"
+          },
+          "cash_balance": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cash Balance"
+          },
+          "reported_market_value": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported Market Value"
+          },
+          "reported_equity": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported Equity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "positions"
+        ],
+        "title": "PortfolioOpeningRequest"
       }
     },
     "securitySchemes": {

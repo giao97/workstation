@@ -8,7 +8,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Optional
@@ -20,8 +20,13 @@ from sqlalchemy import select
 
 from src.config import Config
 from src.repositories.portfolio_repo import PortfolioBusyError, PortfolioRepository
-from src.services.portfolio_service import _AvgState, PortfolioConflictError, PortfolioOversellError, PortfolioService
+from src.services.portfolio_service import _AvgState, _ResolvedPositionPrice, PortfolioConflictError, PortfolioOversellError, PortfolioService
 from src.storage import DatabaseManager, PortfolioDailySnapshot, PortfolioPosition, PortfolioPositionLot, PortfolioTrade
+
+
+def _fresh_quote():
+    return _ResolvedPositionPrice(price=125.0, provider="unit-test", source="realtime_quote", price_date=date.today(),
+                                  timestamp=datetime.now(timezone.utc).isoformat(), is_stale=False, is_available=True)
 
 
 class PortfolioServiceTestCase(unittest.TestCase):
@@ -125,7 +130,7 @@ class PortfolioServiceTestCase(unittest.TestCase):
             currency="CNY",
         )
 
-        with patch.object(PortfolioService, "_fetch_realtime_position_price", return_value=(125.0, "unit-test")):
+        with patch.object(PortfolioService, "_fetch_realtime_position_price", return_value=_fresh_quote()):
             snapshot = self.service.get_portfolio_snapshot(account_id=aid, as_of=today, cost_method="fifo")
 
         pos = snapshot["accounts"][0]["positions"][0]
@@ -152,7 +157,7 @@ class PortfolioServiceTestCase(unittest.TestCase):
         )
         self._save_close("600519", today - timedelta(days=1), 110.0)
 
-        with patch.object(PortfolioService, "_fetch_realtime_position_price", return_value=(125.0, "unit-test")):
+        with patch.object(PortfolioService, "_fetch_realtime_position_price", return_value=_fresh_quote()):
             snapshot = self.service.get_portfolio_snapshot(account_id=aid, as_of=today, cost_method="fifo")
 
         pos = snapshot["accounts"][0]["positions"][0]
@@ -181,7 +186,7 @@ class PortfolioServiceTestCase(unittest.TestCase):
         )
         self._save_close("600519", today, 118.0)
 
-        with patch.object(PortfolioService, "_fetch_realtime_position_price", return_value=(125.0, "unit-test")):
+        with patch.object(PortfolioService, "_fetch_realtime_position_price", return_value=_fresh_quote()):
             snapshot = self.service.get_portfolio_snapshot(account_id=aid, as_of=today, cost_method="fifo")
 
         pos = snapshot["accounts"][0]["positions"][0]
@@ -213,7 +218,7 @@ class PortfolioServiceTestCase(unittest.TestCase):
         with patch.object(
             PortfolioService,
             "_fetch_realtime_position_price",
-            return_value=(None, None),
+            return_value=None,
         ):
             snapshot = self.service.get_portfolio_snapshot(account_id=aid, as_of=today, cost_method="fifo")
 

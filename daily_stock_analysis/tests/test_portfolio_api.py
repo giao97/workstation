@@ -98,6 +98,7 @@ class PortfolioApiTestCase(unittest.TestCase):
         quantity: float = 10.0,
         market: str = "cn",
         currency: str = "CNY",
+        close_date: date = date(2026, 1, 3),
     ) -> int:
         create_resp = self.client.post(
             "/api/v1/portfolio/accounts",
@@ -121,7 +122,7 @@ class PortfolioApiTestCase(unittest.TestCase):
             },
         )
         self.assertEqual(trade_resp.status_code, 200, trade_resp.text)
-        self._save_close(symbol, date(2026, 1, 3), 110.0)
+        self._save_close(symbol, close_date, 110.0)
         return account_id
 
     def test_account_event_snapshot_flow(self) -> None:
@@ -440,7 +441,7 @@ class PortfolioApiTestCase(unittest.TestCase):
 
         with patch(
             "src.services.portfolio_service.PortfolioService._fetch_realtime_position_price",
-            return_value=(None, None),
+            return_value=None,
         ), patch("api.v1.endpoints.portfolio.get_task_queue", return_value=queue):
             resp = self.client.post(
                 "/api/v1/portfolio/positions/600519/analysis",
@@ -476,7 +477,7 @@ class PortfolioApiTestCase(unittest.TestCase):
 
         with patch(
             "src.services.portfolio_service.PortfolioService._fetch_realtime_position_price",
-            return_value=(None, None),
+            return_value=None,
         ), patch("api.v1.endpoints.portfolio.get_task_queue", return_value=queue):
             resp = self.client.post(
                 "/api/v1/portfolio/positions/600519.SH/analysis",
@@ -506,7 +507,7 @@ class PortfolioApiTestCase(unittest.TestCase):
 
         with patch(
             "src.services.portfolio_service.PortfolioService._fetch_realtime_position_price",
-            return_value=(None, None),
+            return_value=None,
         ), patch("api.v1.endpoints.portfolio.get_task_queue", return_value=queue):
             resp = self.client.post(
                 "/api/v1/portfolio/positions/1810.HK/analysis",
@@ -543,7 +544,7 @@ class PortfolioApiTestCase(unittest.TestCase):
 
         with patch(
             "src.services.portfolio_service.PortfolioService._fetch_realtime_position_price",
-            return_value=(None, None),
+            return_value=None,
         ), patch("api.v1.endpoints.portfolio.get_task_queue", return_value=queue):
             resp = self.client.post(
                 "/api/v1/portfolio/positions/600519/analysis",
@@ -961,11 +962,14 @@ class PortfolioApiTestCase(unittest.TestCase):
             quantity=1,
             market="us",
             currency="USD",
+            close_date=date(2026, 1, 2),
         )
         plan_payload = {
             "name": "100w target",
             "base_currency": "USD",
             "target_total_value": 1_000_000,
+            "account_id": account_id,
+            "ledger_complete": True,
             "targets": [
                 {
                     "key": "sp500",
@@ -995,6 +999,12 @@ class PortfolioApiTestCase(unittest.TestCase):
         list_resp = self.client.get("/api/v1/portfolio/allocation-plans")
         self.assertEqual(list_resp.status_code, 200, list_resp.text)
         self.assertEqual(len(list_resp.json()["plans"]), 1)
+        self.client.post("/api/v1/portfolio/cash-ledger", json={
+            "account_id": account_id, "event_date": "2026-01-03", "direction": "in",
+            "amount": 100_000, "currency": "USD",
+        })
+        # Jan 3 is Saturday: reference the actual preceding exchange session.
+        self._save_close("VOO", date(2026, 1, 2), 500)
 
         status_resp = self.client.get(
             f"/api/v1/portfolio/allocation-plans/{plan['id']}/status",
@@ -1008,6 +1018,8 @@ class PortfolioApiTestCase(unittest.TestCase):
         sp500 = next(item for item in status_resp.json()["targets"] if item["key"] == "sp500")
         self.assertEqual(sp500["action"], "add")
         self.assertEqual(sp500["recommended_amount"], 13_000)
+        self.assertTrue(sp500["is_estimate"])
+        self.assertIn("close_reference:VOO:2026-01-02", sp500["reference_notes"])
 
         delete_resp = self.client.delete(f"/api/v1/portfolio/allocation-plans/{plan['id']}")
         self.assertEqual(delete_resp.status_code, 200, delete_resp.text)

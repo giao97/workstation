@@ -56,6 +56,9 @@ export function formatPositionMoney(value: number, row: PortfolioPositionItem): 
 export function getPositionPriceLabel(row: PortfolioPositionItem): string {
   if (!hasPositionPrice(row)) return '缺价';
   if (row.priceSource === 'realtime_quote') {
+    if (row.priceStale) {
+      return row.priceDate ? `参考价 · ${row.priceDate}（已过期）` : '参考价 · 报价时间待核实';
+    }
     return row.priceProvider ? `实时价 · ${row.priceProvider}` : '实时价';
   }
   if (row.priceSource === 'history_close') {

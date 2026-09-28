@@ -46,7 +46,7 @@
 | [Bot 平台配置](bot/) | 飞书、钉钉、Discord 等 Bot 配置截图和补充说明 |
 | [实时告警中心](alerts.md) | EventMonitor 基线、Web 规则管理、通知结果、冷却状态和 Phase 边界 |
 | [DecisionSignal 决策信号专题](decision-signals.md) | AI 建议池字段语义、API、Web 展示、告警/通知/组合风险联动、后验评估、脱敏、迁移与回滚 |
-| [目标配置与再平衡引擎](portfolio-allocation.md) | 版本化目标仓位、持仓与手工资产映射、缺口、超配、下一批金额和数据边界 |
+| [目标配置与再平衡引擎](portfolio-allocation.md) | 目标配置页面、账本确认、共享现金预算、行情时效、每日简报联动与升级回滚 |
 | [基本面研究与证据时点契约](fundamental-research-contract.md) | `as_of`、证据来源、多期财务标准字段、可复算质量指标及兼容降级约定 |
 | [资讯 / 情报源](intelligence-sources.md) | RSS/Atom 合规资讯源配置、测试、拉取、去重、存储、查询与安全边界 |
 | [分析上下文包契约、运行态消费与可见性](analysis-context-pack.md) | AnalysisContextPack 首版范围、字段质量状态、P1/P2 内部契约、P3 Prompt 摘要消费、P4 历史/API/Web 低敏可见性、P5 数据质量评分、P6 迁移回滚与源码锚点；完整指南补充 #1386 阶段感知分析、迁移与回滚入口 |

@@ -10,7 +10,7 @@ that output with current market evidence before presenting an execution idea.
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Set
+from typing import Any, Dict, List, Mapping, Optional, Set
 
 
 ALLOCATION_ACTIONS = frozenset({"add", "hold", "reduce", "review"})
@@ -73,7 +73,7 @@ def _target_current_amount(
     if source == "cash":
         cash_limitations = [] if bool(target.get("cash_reliable", True)) else ["cash_fx_unreliable"]
         return {
-            "amount": max(0.0, cash_value),
+            "amount": None if cash_limitations else max(0.0, cash_value),
             "matched_positions": [],
             "matched_indexes": set(),
             "limitations": cash_limitations,
@@ -95,6 +95,8 @@ def _target_current_amount(
         value = _position_value(position)
         if not bool(position.get("price_available", True)):
             limitations.append(f"position_price_missing:{symbol}")
+        elif bool(position.get("price_stale", False)) and not position.get("price_reference_usable", False):
+            limitations.append(f"position_price_stale:{symbol}")
         if bool(position.get("fx_stale", False)):
             limitations.append(f"position_fx_unreliable:{symbol}")
         current_amount += value
@@ -107,7 +109,8 @@ def _target_current_amount(
         })
 
     return {
-        "amount": current_amount,
+        "amount": None if any(item.startswith(("position_price_missing:", "position_fx_unreliable:"))
+                              for item in limitations) else current_amount,
         "matched_positions": matched_positions,
         "matched_indexes": matched_indexes,
         "limitations": sorted(set(limitations)),
@@ -135,6 +138,8 @@ def _allocation_action(
         return {"action": "hold", "recommended_amount": 0.0, "reason": f"policy_{policy}"}
 
     if gap > 0:
+        if policy == "rebalance" and min_amount is not None and not below_band:
+            return {"action": "hold", "recommended_amount": 0.0, "reason": "inside_rebalance_band"}
         cap = gap if batch_amount is None else min(gap, batch_amount)
         reason = "below_min_band" if below_band else "below_target"
         return {"action": "add", "recommended_amount": round(max(0.0, cap), 2), "reason": reason}
@@ -173,6 +178,9 @@ def evaluate_allocation_plan(
     target_results: List[Dict[str, Any]] = []
     matched_position_indexes: Set[int] = set()
     plan_limitations = list(normalized_snapshot.get("limitations") or [])
+    ledger_complete = bool(plan.get("ledger_complete", False))
+    if not ledger_complete:
+        plan_limitations.append("ledger_not_confirmed")
 
     for target in plan.get("targets") or []:
         source = str(target.get("source") or "position").strip().lower()
@@ -196,11 +204,20 @@ def evaluate_allocation_plan(
         matched_position_indexes.update(current["matched_indexes"])
         limitations = list(current["limitations"])
         current_amount = current["amount"]
+        reference_notes = sorted({note for index in current["matched_indexes"]
+                                  for note in positions[index].get("reference_notes", [])})
+        if source == "cash":
+            reference_notes = list(normalized_snapshot.get("cash_reference_notes") or [])
 
         data_complete = not limitations
         if source in {"position", "cash"} and account_count <= 0:
             data_complete = False
             limitations.append("portfolio_accounts_missing")
+            current_amount = None
+        if source in {"position", "cash"} and not ledger_complete:
+            data_complete = False
+            limitations.append("ledger_not_confirmed")
+            current_amount = None
 
         action = _allocation_action(
             current_amount=current_amount,
@@ -240,11 +257,55 @@ def evaluate_allocation_plan(
             "band_status": band_status,
             "action": action["action"],
             "recommended_amount": action["recommended_amount"],
+            "allocation_cap": action["recommended_amount"],
             "reason": action["reason"],
             "data_complete": data_complete,
+            "is_estimate": bool(reference_notes),
+            "reference_notes": reference_notes,
             "limitations": sorted(set(limitations)),
             "matched_positions": current["matched_positions"],
         })
+
+    # All additions share one budget. Sale proceeds and manual balances are not
+    # spendable cash until they are actually recorded in the account ledger.
+    cash_target = sum(item["target_amount"] for item in target_results if item["source"] == "cash")
+    reserve = max(cash_target, _finite_number(plan.get("cash_reserve_amount")))
+    cash_known = ledger_complete and account_count > 0 and bool(normalized_snapshot.get("cash_reliable", True))
+    available_cash = round(max(0.0, cash_value - reserve), 2) if cash_known else None
+    remaining = available_cash or 0.0
+    for item in target_results:
+        if item["source"] == "cash" and item["action"] in {"add", "reduce"}:
+            item.update(action="hold", recommended_amount=0.0, reason="cash_reserve_only")
+        elif item["action"] == "add":
+            item["reference_notes"] = sorted(set(item["reference_notes"] +
+                                                  list(normalized_snapshot.get("cash_reference_notes") or [])))
+            item["is_estimate"] = bool(item["reference_notes"])
+            if not cash_known:
+                item.update(action="review", recommended_amount=0.0, reason="cash_budget_unavailable")
+                item["limitations"].append("cash_budget_unavailable")
+            else:
+                amount = min(item["allocation_cap"], remaining)
+                if amount < item["allocation_cap"]:
+                    item["reason"] = "cash_budget_limited"
+                item["recommended_amount"] = round(amount, 2)
+                if amount == 0:
+                    item["action"] = "hold"
+                remaining = round(remaining - amount, 2)
+
+    # A separate, additive field: ledger-based planning caps remain compatible.
+    # Confirmed cash cannot be moved between markets or pre-funded by promises.
+    pools = dict(normalized_snapshot.get("confirmed_pools") or {})
+    funding_known = cash_known and bool(normalized_snapshot.get("funding_complete", False))
+    confirmed_cash = max(0.0, sum(pools.values()) - reserve) if funding_known else None
+    funded_remaining = confirmed_cash or 0.0
+    for item in target_results:
+        item["funded_amount"] = None
+        if funding_known and item["market"] in pools:
+            amount = min(item["recommended_amount"], funded_remaining, pools[item["market"]]) if item["action"] == "add" else 0.0
+            # Do not round a sub-cent cash cap upwards.
+            item["funded_amount"] = math.floor(max(0.0, amount) * 100 + 1e-8) / 100
+            funded_remaining = max(0.0, funded_remaining - item["funded_amount"])
+            pools[item["market"]] = max(0.0, pools[item["market"]] - item["funded_amount"])
 
     unassigned_positions = []
     for index, position in enumerate(positions):
@@ -265,8 +326,12 @@ def evaluate_allocation_plan(
 
     if any(not item["data_complete"] for item in target_results):
         plan_limitations.append("allocation_current_amount_incomplete")
+    if not cash_known:
+        plan_limitations.append("cash_budget_unavailable")
     if unassigned_positions:
         plan_limitations.append("unassigned_positions_present")
+    if any(item["is_estimate"] for item in target_results):
+        plan_limitations.append("allocation_uses_reference_data")
 
     known_current = sum(
         float(item["current_amount"])
@@ -279,6 +344,14 @@ def evaluate_allocation_plan(
         "plan_version": int(_finite_number(plan.get("version"), default=1.0)),
         "base_currency": str(plan.get("base_currency") or "CNY").upper(),
         "target_total_value": round(total_value, 2),
+        "ledger_complete": ledger_complete,
+        "cash_reserve_amount": round(reserve, 2),
+        "available_cash": available_cash,
+        "confirmed_cash": round(confirmed_cash, 2) if confirmed_cash is not None else None,
+        "funding_accounts": normalized_snapshot.get("funding_accounts", []),
+        "total_recommended_add": round(sum(
+            item["recommended_amount"] for item in target_results if item["action"] == "add"
+        ), 2),
         "as_of": normalized_snapshot.get("as_of"),
         "data_quality": "partial" if plan_limitations else "ok",
         "limitations": sorted(set(str(item) for item in plan_limitations if item)),
@@ -289,5 +362,7 @@ def evaluate_allocation_plan(
         "disclosures": [
             "recommended_amount is an allocation cap, not a market-timing or automatic trading instruction",
             "targets with incomplete current amounts require review before any action",
+            "additions share the recorded cash budget after reserves, in target order; sale proceeds are not pre-spent",
+            "current_pct uses target_total_value as denominator, not the partial known portfolio total",
         ],
     }

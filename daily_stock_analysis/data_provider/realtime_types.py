@@ -16,12 +16,26 @@
 
 import logging
 import time
+from datetime import datetime, timezone
 from threading import RLock
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, Union
 from enum import Enum
 
 logger = logging.getLogger(__name__)
+
+
+def parse_quote_timestamp(value: Any) -> Optional[datetime]:
+    """Parse an explicit provider instant; never assign a timezone to unknown local time."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(value, timezone.utc) if value > 0 else None
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).strip().replace('Z', '+00:00'))
+        return parsed.astimezone(timezone.utc) if parsed.tzinfo is not None else None
+    except (ValueError, TypeError, OverflowError, OSError):
+        return None
 
 
 # ============================================
@@ -102,6 +116,7 @@ class RealtimeSource(Enum):
     TENCENT = "tencent"             # 腾讯直连
     SINA = "sina"                   # 新浪直连
     STOOQ = "stooq"                 # Stooq 美股兜底
+    YFINANCE = "yfinance"           # Yahoo Finance
     LONGBRIDGE = "longbridge"       # 长桥（美股/港股兜底）
     FUTU = "futu"                   # 富途 OpenD（港股）
     FALLBACK = "fallback"           # 降级兜底

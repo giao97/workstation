@@ -42,6 +42,61 @@ class PortfolioAccountListResponse(BaseModel):
     accounts: List[PortfolioAccountItem] = Field(default_factory=list)
 
 
+class PortfolioOpeningPosition(BaseModel):
+    symbol: str = Field(..., min_length=1, max_length=16)
+    quantity: float = Field(..., gt=0, allow_inf_nan=False)
+    avg_cost: float = Field(..., ge=0, allow_inf_nan=False)
+    reported_market_value: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
+
+
+class PortfolioOpeningRequest(BaseModel):
+    as_of: date
+    positions: List[PortfolioOpeningPosition] = Field(..., min_length=1, max_length=1000)
+    cash_balance: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
+    reported_market_value: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
+    reported_equity: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
+
+
+class PortfolioOpeningCommitRequest(PortfolioOpeningRequest):
+    confirmed: Literal[True]
+    preview_token: str = Field(..., min_length=64, max_length=64)
+
+
+class PortfolioOpeningPreview(BaseModel):
+    account_id: int
+    opening: Dict[str, Any]
+    preview_token: str
+    can_commit: bool
+    detail_market_value: Optional[float] = None
+    market_value_difference: Optional[float] = None
+    equity_less_market_value: Optional[float] = None
+    equity_difference: Optional[float] = None
+    limitations: List[str] = Field(default_factory=list)
+
+
+class PortfolioOpeningCommitResponse(BaseModel):
+    account_id: int
+    created: bool
+
+
+class PortfolioFundingRequest(BaseModel):
+    as_of: date
+    settled_cash: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
+    available_cash: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
+    planned_deposit: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
+    planned_deposit_date: Optional[date] = None
+
+
+class PortfolioAccountStateResponse(BaseModel):
+    account_id: int
+    currency: str
+    opening: Optional[Dict[str, Any]] = None
+    funding: Optional[Dict[str, Any]] = None
+    cash_confirmed: bool
+    confirmed_cash_cap: Optional[float] = None
+    disclosures: List[str] = Field(default_factory=list)
+
+
 class PortfolioTradeCreateRequest(BaseModel):
     account_id: int
     symbol: str = Field(..., min_length=1, max_length=16)
@@ -164,6 +219,8 @@ class PortfolioPositionItem(BaseModel):
     price_source: str = "unknown"
     price_provider: Optional[str] = None
     price_date: Optional[str] = None
+    price_timestamp: Optional[str] = None
+    price_fetched_at: Optional[str] = None
     price_stale: bool = False
     price_available: bool = True
     data_quality: str = "ok"
@@ -186,6 +243,7 @@ class PortfolioAccountSnapshot(BaseModel):
     as_of: str
     cost_method: str
     total_cash: float
+    funding: Optional[PortfolioAccountStateResponse] = None
     total_market_value: float
     total_equity: float
     realized_pnl: float
@@ -317,6 +375,10 @@ class PortfolioAllocationPlanWriteRequest(BaseModel):
     owner_id: Optional[str] = Field(None, max_length=64)
     base_currency: str = Field("CNY", min_length=3, max_length=8)
     target_total_value: float = Field(..., gt=0)
+    account_id: Optional[int] = Field(None, gt=0, description="Fixed scope; null means all active accounts")
+    ledger_complete: bool = Field(False, description="User confirms holdings and cash for this scope are fully recorded")
+    cash_reserve_amount: float = Field(0, ge=0)
+    include_in_reports: bool = Field(False, description="Include in daily reports sent to existing report recipients")
     targets: List[PortfolioAllocationTargetInput] = Field(..., min_length=1)
 
 
@@ -330,6 +392,10 @@ class PortfolioAllocationPlanItem(BaseModel):
     name: str
     base_currency: str
     target_total_value: float
+    account_id: Optional[int] = None
+    ledger_complete: bool = False
+    cash_reserve_amount: float = 0
+    include_in_reports: bool = False
     version: int
     is_active: bool
     created_at: Optional[str] = None
@@ -343,6 +409,10 @@ class PortfolioAllocationPlanSummary(BaseModel):
     name: str
     base_currency: str
     target_total_value: float
+    account_id: Optional[int] = None
+    ledger_complete: bool = False
+    cash_reserve_amount: float = 0
+    include_in_reports: bool = False
     version: int
     is_active: bool
     created_at: Optional[str] = None
@@ -379,6 +449,10 @@ class PortfolioAllocationTargetStatus(BaseModel):
     band_status: Literal["below_min", "inside_band", "above_max", "unknown"]
     action: Literal["add", "hold", "reduce", "review"]
     recommended_amount: float
+    allocation_cap: float = 0
+    funded_amount: Optional[float] = None
+    is_estimate: bool = False
+    reference_notes: List[str] = Field(default_factory=list)
     reason: str
     data_complete: bool
     limitations: List[str] = Field(default_factory=list)
@@ -402,6 +476,12 @@ class PortfolioAllocationStatusResponse(BaseModel):
     account_id: Optional[int] = None
     cost_method: str
     include_realtime: bool
+    ledger_complete: bool = False
+    cash_reserve_amount: float = 0
+    available_cash: Optional[float] = None
+    confirmed_cash: Optional[float] = None
+    funding_accounts: List[Dict[str, Any]] = Field(default_factory=list)
+    total_recommended_add: float = 0
     data_quality: Literal["ok", "partial"]
     limitations: List[str] = Field(default_factory=list)
     known_current_amount: float

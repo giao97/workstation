@@ -393,6 +393,14 @@ export const MarketReviewReportView: React.FC<MarketReviewReportViewProps> = ({
   const sections = useMemo(
     () => {
       const payloadSections = getPayloadSections(marketReviewPayload);
+      if (payloadSections.length > 0 && marketReviewPayload?.allocationSummary) {
+        payloadSections.push({
+          id: 'allocation-summary',
+          title: marketReviewPayload.allocationSummary.title,
+          content: marketReviewPayload.allocationSummary.markdown,
+          icon: ShieldAlert,
+        });
+      }
       return payloadSections.length > 0 ? payloadSections : splitMarketReviewSections(structuredContent);
     },
     [marketReviewPayload, structuredContent],

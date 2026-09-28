@@ -100,6 +100,7 @@ def test_sina_realtime_success_logs_endpoint(caplog, monkeypatch, akshare_fetche
     assert quote is not None
     assert quote.name == "大秦铁路"
     assert quote.price == 5.19
+    assert quote.provider_timestamp == "2026-03-08T15:00:00+08:00"
     assert breaker.successes == ["akshare_sina"]
     assert f"endpoint={SINA_REALTIME_ENDPOINT}" in caplog.text
     assert "[实时行情-新浪] 601006 大秦铁路:" in caplog.text

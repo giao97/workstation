@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import math
 import re
-from datetime import date
+from datetime import date, datetime, time, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 from src.core.portfolio_allocation import (
@@ -15,6 +15,8 @@ from src.core.portfolio_allocation import (
     normalize_allocation_symbol,
 )
 from src.repositories.portfolio_allocation_repo import PortfolioAllocationRepository
+from data_provider.realtime_types import parse_quote_timestamp
+from src.core.trading_calendar import get_market_now, is_latest_completed_close
 
 if TYPE_CHECKING:
     from src.services.portfolio_service import PortfolioService
@@ -46,6 +48,10 @@ class PortfolioAllocationService:
         target_total_value: float,
         targets: Sequence[Dict[str, Any]],
         owner_id: Optional[str] = None,
+        account_id: Optional[int] = None,
+        ledger_complete: bool = False,
+        cash_reserve_amount: float = 0.0,
+        include_in_reports: bool = False,
     ) -> Dict[str, Any]:
         normalized = self._validate_plan(
             name=name,
@@ -53,6 +59,10 @@ class PortfolioAllocationService:
             target_total_value=target_total_value,
             targets=targets,
             owner_id=owner_id,
+            account_id=account_id,
+            ledger_complete=ledger_complete,
+            cash_reserve_amount=cash_reserve_amount,
+            include_in_reports=include_in_reports,
         )
         plan, target_rows = self.repo.create_plan(**normalized)
         return self._serialize_plan(plan, target_rows)
@@ -66,6 +76,10 @@ class PortfolioAllocationService:
         target_total_value: float,
         targets: Sequence[Dict[str, Any]],
         owner_id: Optional[str] = None,
+        account_id: Optional[int] = None,
+        ledger_complete: bool = False,
+        cash_reserve_amount: float = 0.0,
+        include_in_reports: bool = False,
     ) -> Optional[Dict[str, Any]]:
         normalized = self._validate_plan(
             name=name,
@@ -73,6 +87,10 @@ class PortfolioAllocationService:
             target_total_value=target_total_value,
             targets=targets,
             owner_id=owner_id,
+            account_id=account_id,
+            ledger_complete=ledger_complete,
+            cash_reserve_amount=cash_reserve_amount,
+            include_in_reports=include_in_reports,
         )
         result = self.repo.update_plan(plan_id=plan_id, **normalized)
         if result is None:
@@ -104,6 +122,10 @@ class PortfolioAllocationService:
         plan = self.get_plan(plan_id)
         if plan is None:
             return None
+        plan_account = plan.get("account_id")
+        if account_id is not None and account_id != plan_account:
+            raise ValueError("account_id must match the plan scope; do not evaluate a full plan against one account")
+        account_id = plan_account
         as_of_date = as_of or date.today()
         snapshot = self.portfolio_service.get_portfolio_snapshot(
             account_id=account_id,
@@ -133,38 +155,79 @@ class PortfolioAllocationService:
         cash_reliable = True
         positions: List[Dict[str, Any]] = []
         limitations = list(snapshot.get("limitations") or [])
+        cash_reference_notes: List[str] = []
+        confirmed_pools: Dict[str, float] = {}
+        funding_accounts = []
+        funding_complete = True
+
+        def convert(amount, currency):
+            converter = getattr(self.portfolio_service, "convert_amount_for_allocation", None)
+            if converter is not None:
+                return converter(amount=amount, from_currency=currency, to_currency=plan_currency,
+                                 as_of_date=as_of_date)
+            value, stale, _ = self.portfolio_service.convert_amount(
+                amount=amount, from_currency=currency, to_currency=plan_currency, as_of_date=as_of_date)
+            return value, not stale, None
+
         for account in snapshot.get("accounts") or []:
+            account_fx_stale = bool(account.get("fx_stale", False))
             account_currency = str(account.get("base_currency") or plan_currency).upper()
-            converted_cash, cash_stale, cash_mode = self.portfolio_service.convert_amount(
-                amount=float(account.get("total_cash") or 0.0),
-                from_currency=account_currency,
-                to_currency=plan_currency,
-                as_of_date=as_of_date,
-            )
-            cash_value += converted_cash
-            if cash_stale:
-                cash_reliable = False
-                limitations.append(f"cash_fx_stale:{account_currency}:{cash_mode}")
+            native_cash = account.get("cash_balances")
+            funding = account.get("funding") or {}
+            observed = funding.get("funding") or {}
+            cash_cap = funding.get("confirmed_cash_cap")
+            funding_accounts.append({"account_id": account.get("account_id"), "currency": account_currency,
+                                     "cash_confirmed": bool(funding.get("cash_confirmed")),
+                                     "confirmed_cash_cap": cash_cap,
+                                     "planned_deposit": observed.get("planned_deposit"),
+                                     "planned_deposit_date": observed.get("planned_deposit_date")})
+            if cash_cap is None or not funding.get("cash_confirmed") or not isinstance(native_cash, dict):
+                funding_complete = False
+            else:
+                cap = min(max(0.0, float(native_cash.get(account_currency, 0))), max(0.0, float(cash_cap)))
+                converted_cap, reliable_cap, _ = convert(cap, account_currency)
+                market = account.get("market")
+                native_currency = {"cn": "CNY", "us": "USD", "hk": "HKD", "jp": "JPY", "kr": "KRW", "tw": "TWD"}.get(market)
+                if not reliable_cap or native_currency != account_currency:
+                    funding_complete = False
+                else:
+                    confirmed_pools[market] = confirmed_pools.get(market, 0.0) + converted_cap
+            # Revalue actual cash currencies, not an account total already polluted
+            # by missing FX or the historical P&L conversion quality flag.
+            balances = native_cash if isinstance(native_cash, dict) else {
+                account_currency: float(account.get("total_cash") or 0.0)}
+            for currency, amount in balances.items():
+                converted_cash, reliable, note = convert(float(amount), currency)
+                cash_value += converted_cash
+                if not reliable or (native_cash is None and account_fx_stale):
+                    cash_reliable = False
+                    limitations.append(f"cash_fx_stale:{currency}")
+                if note:
+                    cash_reference_notes.append(note)
 
             for position in account.get("positions") or []:
-                valuation_currency = str(position.get("valuation_currency") or account_currency).upper()
-                converted_value, fx_stale, fx_mode = self.portfolio_service.convert_amount(
-                    amount=float(position.get("market_value_base") or 0.0),
-                    from_currency=valuation_currency,
-                    to_currency=plan_currency,
-                    as_of_date=as_of_date,
-                )
+                native_value = all(position.get(key) is not None for key in ("quantity", "last_price", "currency"))
+                valuation_currency = str(position["currency"] if native_value else
+                                         position.get("valuation_currency") or account_currency).upper()
+                value = (float(position["quantity"]) * float(position["last_price"]) if native_value else
+                         float(position.get("market_value_base") or 0.0))
+                converted_value, reliable, note = convert(value, valuation_currency)
+                fx_stale = not reliable or (not native_value and account_fx_stale)
                 if fx_stale:
-                    limitations.append(
-                        f"position_fx_stale:{position.get('symbol')}:{valuation_currency}:{fx_mode}"
-                    )
+                    limitations.append(f"position_fx_stale:{position.get('symbol')}:{valuation_currency}")
+                reference_notes = [note] if note else []
+                close_reference = self._close_reference(position, as_of_date)
+                if close_reference:
+                    reference_notes.append(close_reference)
                 positions.append({
                     "account_id": account.get("account_id"),
                     "symbol": position.get("symbol"),
                     "market": position.get("market"),
                     "market_value_plan": converted_value,
                     "price_available": bool(position.get("price_available", True)),
-                    "price_stale": bool(position.get("price_stale", False)),
+                    "price_stale": bool(position.get("price_stale", False)) or position.get("price_source") == "history_close",
+                    "price_reference_usable": bool(close_reference),
+                    "reference_notes": reference_notes,
                     "fx_stale": bool(fx_stale),
                 })
 
@@ -173,9 +236,38 @@ class PortfolioAllocationService:
             "account_count": int(snapshot.get("account_count") or 0),
             "cash_value": cash_value,
             "cash_reliable": cash_reliable,
+            "cash_reference_notes": sorted(set(cash_reference_notes)),
+            "funding_complete": funding_complete,
+            "confirmed_pools": confirmed_pools,
+            "funding_accounts": funding_accounts,
             "positions": positions,
             "limitations": sorted(set(limitations)),
         }
+
+    @staticmethod
+    def _close_reference(position: Dict[str, Any], as_of_date: date) -> Optional[str]:
+        if not position.get("price_available", True):
+            return None
+        market = str(position.get("market") or "")
+        if market not in _SUPPORTED_MARKETS:
+            return None
+        now = datetime.now(timezone.utc)
+        if as_of_date != date.today():
+            # A historical as-of snapshot is evaluated at that market's day end,
+            # never using a future instant beyond the actual evaluation time.
+            now = min(now, get_market_now(market, datetime.combine(as_of_date, time.max)))
+        is_bar = position.get("price_source") == "history_close"
+        instant = parse_quote_timestamp(position.get("price_timestamp"))
+        if not is_bar and instant is None:
+            return None
+        try:
+            observed = (date.fromisoformat(position["price_date"]) if is_bar else
+                        get_market_now(market, instant).date())
+        except (TypeError, ValueError, KeyError):
+            return None
+        if is_latest_completed_close(market, observed, quote_time=None if is_bar else instant, current_time=now):
+            return f"close_reference:{position.get('symbol')}:{observed.isoformat()}"
+        return None
 
     @classmethod
     def _validate_plan(
@@ -186,6 +278,10 @@ class PortfolioAllocationService:
         target_total_value: float,
         targets: Sequence[Dict[str, Any]],
         owner_id: Optional[str],
+        account_id: Optional[int] = None,
+        ledger_complete: bool = False,
+        cash_reserve_amount: float = 0.0,
+        include_in_reports: bool = False,
     ) -> Dict[str, Any]:
         name_norm = str(name or "").strip()
         if not name_norm or len(name_norm) > 96:
@@ -194,6 +290,13 @@ class PortfolioAllocationService:
         if len(currency) < 3 or len(currency) > 8:
             raise ValueError("base_currency must contain 3 to 8 characters")
         total_value = cls._positive_finite(target_total_value, "target_total_value")
+        if account_id is not None and (type(account_id) is not int or account_id <= 0):
+            raise ValueError("account_id must be a positive integer")
+        if type(ledger_complete) is not bool or type(include_in_reports) is not bool:
+            raise ValueError("ledger_complete and include_in_reports must be booleans")
+        reserve = cls._nonnegative_finite(cash_reserve_amount, "cash_reserve_amount")
+        if reserve > total_value:
+            raise ValueError("cash_reserve_amount cannot exceed target_total_value")
         owner_norm = str(owner_id).strip() if owner_id not in (None, "") else None
         if owner_norm is not None and len(owner_norm) > 64:
             raise ValueError("owner_id must contain at most 64 characters")
@@ -295,6 +398,10 @@ class PortfolioAllocationService:
             "owner_id": owner_norm,
             "base_currency": currency,
             "target_total_value": total_value,
+            "account_id": account_id,
+            "ledger_complete": ledger_complete,
+            "cash_reserve_amount": reserve,
+            "include_in_reports": include_in_reports,
             "targets": normalized_targets,
         }
 

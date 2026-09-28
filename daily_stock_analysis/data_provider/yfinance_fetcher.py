@@ -16,6 +16,7 @@ YfinanceFetcher - 兜底数据源 (Priority 4)
 
 import csv
 import logging
+import math
 from datetime import datetime
 from io import StringIO
 from typing import Optional, List, Dict, Any
@@ -32,7 +33,7 @@ from tenacity import (
 )
 
 from .base import BaseFetcher, DataFetchError, STANDARD_COLUMNS, is_bse_code
-from .realtime_types import UnifiedRealtimeQuote, RealtimeSource
+from .realtime_types import UnifiedRealtimeQuote, RealtimeSource, parse_quote_timestamp
 from .us_index_mapping import get_us_index_yf_symbol, is_us_stock_code
 from .yfinance_fundamental_adapter import _safe_float
 from src.services.market_symbol_utils import get_suffix_market, is_suffix_market_symbol
@@ -53,6 +54,15 @@ except (ImportError, ModuleNotFoundError):
 import os
 
 logger = logging.getLogger(__name__)
+
+
+def _regular_market_observation(info: Dict[str, Any]):
+    """Keep price and timestamp from the same Yahoo observation, never fast_info + info time."""
+    price = _safe_float(info.get("regularMarketPrice"))
+    instant = parse_quote_timestamp(info.get("regularMarketTime"))
+    if price is None or not math.isfinite(price) or price <= 0 or instant is None:
+        return None
+    return price, instant.isoformat()
 
 
 class YfinanceFetcher(BaseFetcher):
@@ -747,6 +757,20 @@ class YfinanceFetcher(BaseFetcher):
                 ticker_info = ticker.info or {}
             except Exception:
                 ticker_info = {}
+            provider_timestamp = None
+            observation = _regular_market_observation(ticker_info)
+            if observation is not None:
+                price, provider_timestamp = observation
+                # fast_info.previous_close can use a different session/adjustment.
+                prev_close = _safe_float(ticker_info.get("regularMarketPreviousClose"))
+                if prev_close is not None and (not math.isfinite(prev_close) or prev_close <= 0):
+                    prev_close = None
+                change_amount = change_pct = amplitude = None
+                if prev_close is not None and prev_close > 0:
+                    change_amount = price - prev_close
+                    change_pct = change_amount / prev_close * 100
+                    if high is not None and low is not None:
+                        amplitude = (high - low) / prev_close * 100
             missing_fields = [
                 field
                 for field, value in {
@@ -763,7 +787,8 @@ class YfinanceFetcher(BaseFetcher):
             quote = UnifiedRealtimeQuote(
                 code=user_code,
                 name=index_name or user_code,
-                source=RealtimeSource.FALLBACK,
+                source=RealtimeSource.YFINANCE,
+                provider_timestamp=provider_timestamp,
                 market="us",
                 currency=str(ticker_info.get("currency") or "").upper() or None,
                 data_quality="partial" if missing_fields else "ok",
@@ -885,6 +910,19 @@ class YfinanceFetcher(BaseFetcher):
                 ticker_info = ticker.info or {}
             except Exception:
                 ticker_info = {}
+            provider_timestamp = None
+            observation = _regular_market_observation(ticker_info)
+            if observation is not None:
+                price, provider_timestamp = observation
+                prev_close = _safe_float(ticker_info.get("regularMarketPreviousClose"))
+                if prev_close is not None and (not math.isfinite(prev_close) or prev_close <= 0):
+                    prev_close = None
+                change_amount = change_pct = amplitude = None
+                if prev_close is not None and prev_close > 0:
+                    change_amount = price - prev_close
+                    change_pct = change_amount / prev_close * 100
+                    if high is not None and low is not None:
+                        amplitude = (high - low) / prev_close * 100
             try:
                 info_name = ticker_info.get('shortName', '') or ticker_info.get('longName', '') or ''
                 name = info_name if is_meaningful_stock_name(info_name, symbol) else STOCK_NAME_MAP.get(symbol, '')
@@ -910,7 +948,8 @@ class YfinanceFetcher(BaseFetcher):
             quote = UnifiedRealtimeQuote(
                 code=symbol,
                 name=name,
-                source=RealtimeSource.FALLBACK,
+                source=RealtimeSource.YFINANCE,
+                provider_timestamp=provider_timestamp,
                 market=suffix_market or ("us" if is_us_symbol else None),
                 currency=str(ticker_info.get("currency") or "").upper() or None,
                 data_quality="partial" if missing_fields else "ok",

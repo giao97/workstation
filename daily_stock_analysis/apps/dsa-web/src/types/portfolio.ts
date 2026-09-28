@@ -5,6 +5,77 @@ export type PortfolioSide = 'buy' | 'sell';
 export type PortfolioCashDirection = 'in' | 'out';
 export type PortfolioCorporateActionType = 'cash_dividend' | 'split_adjustment';
 
+export interface AllocationTarget {
+  key: string;
+  name: string;
+  source: 'position' | 'cash' | 'manual';
+  policy: 'buy_only' | 'rebalance' | 'hold_only' | 'exit_only';
+  market?: PortfolioAccountItem['market'] | null;
+  symbols: string[];
+  targetPct: number;
+  minPct?: number | null;
+  maxPct?: number | null;
+  batchAmount?: number | null;
+  currentAmount?: number | null;
+  sortOrder: number;
+  note?: string | null;
+}
+
+export interface AllocationPlanWrite {
+  name: string;
+  ownerId?: string | null;
+  baseCurrency: string;
+  targetTotalValue: number;
+  accountId: number | null;
+  ledgerComplete: boolean;
+  cashReserveAmount: number;
+  includeInReports: boolean;
+  targets: AllocationTarget[];
+}
+
+export interface AllocationPlan extends AllocationPlanWrite {
+  id: number;
+  version: number;
+  isActive: boolean;
+}
+
+export interface AllocationTargetStatus extends Omit<AllocationTarget, 'currentAmount'> {
+  currentAmount: number | null;
+  currentPct: number | null;
+  targetAmount: number;
+  gapAmount: number | null;
+  allocationCap: number;
+  fundedAmount?: number | null;
+  isEstimate?: boolean;
+  referenceNotes?: string[];
+  recommendedAmount: number;
+  action: 'add' | 'reduce' | 'hold' | 'review';
+  reason: string;
+  dataComplete: boolean;
+  limitations: string[];
+}
+
+export interface AllocationStatus {
+  planId: number;
+  planName: string;
+  planVersion: number;
+  baseCurrency: string;
+  targetTotalValue: number;
+  accountId: number | null;
+  asOf: string;
+  ledgerComplete: boolean;
+  cashReserveAmount: number;
+  availableCash: number | null;
+  confirmedCash?: number | null;
+  fundingAccounts?: Array<{ accountId: number; currency: string; cashConfirmed: boolean;
+    confirmedCashCap: number | null; plannedDeposit: number | null; plannedDepositDate: string | null }>;
+  totalRecommendedAdd: number;
+  dataQuality: 'ok' | 'partial';
+  limitations: string[];
+  targets: AllocationTargetStatus[];
+  unassignedPositions: Array<{ symbol: string; currentAmount: number; priceAvailable: boolean }>;
+}
+
 export interface PortfolioAccountItem {
   id: number;
   ownerId?: string | null;
@@ -15,6 +86,51 @@ export interface PortfolioAccountItem {
   isActive: boolean;
   createdAt?: string | null;
   updatedAt?: string | null;
+}
+
+export interface OpeningPosition {
+  symbol: string;
+  quantity: number;
+  avgCost: number;
+  reportedMarketValue: number | null;
+}
+
+export interface OpeningBalanceWrite {
+  asOf: string;
+  positions: OpeningPosition[];
+  cashBalance: number | null;
+  reportedMarketValue: number | null;
+  reportedEquity: number | null;
+}
+
+export interface OpeningPreview {
+  accountId: number;
+  opening: OpeningBalanceWrite & { currency: string; market: string };
+  previewToken: string;
+  canCommit: boolean;
+  detailMarketValue: number | null;
+  marketValueDifference: number | null;
+  equityLessMarketValue: number | null;
+  equityDifference: number | null;
+  limitations: string[];
+}
+
+export interface FundingWrite {
+  asOf: string;
+  settledCash: number | null;
+  availableCash: number | null;
+  plannedDeposit: number | null;
+  plannedDepositDate: string | null;
+}
+
+export interface AccountState {
+  accountId: number;
+  currency: string;
+  opening: OpeningBalanceWrite | null;
+  funding: (FundingWrite & { id: number; ledgerUnchanged: boolean }) | null;
+  cashConfirmed: boolean;
+  confirmedCashCap: number | null;
+  disclosures: string[];
 }
 
 export interface PortfolioAccountListResponse {
@@ -44,6 +160,8 @@ export interface PortfolioPositionItem {
   priceSource?: 'realtime_quote' | 'history_close' | 'missing' | string;
   priceProvider?: string | null;
   priceDate?: string | null;
+  priceTimestamp?: string | null;
+  priceFetchedAt?: string | null;
   priceStale?: boolean;
   priceAvailable?: boolean;
   dataQuality?: 'ok' | 'partial' | string;
@@ -75,6 +193,7 @@ export interface PortfolioAccountSnapshot {
   fxStale: boolean;
   dataQuality?: 'ok' | 'partial' | string;
   limitations?: string[];
+  funding?: AccountState | null;
   positions: PortfolioPositionItem[];
 }
 

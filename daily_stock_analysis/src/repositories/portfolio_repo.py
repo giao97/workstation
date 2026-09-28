@@ -7,6 +7,8 @@ Provides DB access helpers for portfolio account/events/snapshot tables.
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
 from contextlib import contextmanager
 from datetime import date, datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -24,6 +26,8 @@ from src.storage import (
     PortfolioPosition,
     PortfolioPositionLot,
     PortfolioTrade,
+    PortfolioOpeningBalance,
+    PortfolioFundingSnapshot,
     StockDaily,
 )
 
@@ -105,16 +109,20 @@ class PortfolioRepository:
         ).scalar_one_or_none()
 
     def update_account(self, account_id: int, fields: Dict[str, Any]) -> Optional[PortfolioAccount]:
-        with self.db.get_session() as session:
+        with self.portfolio_write_session() as session:
             row = session.execute(
                 select(PortfolioAccount).where(PortfolioAccount.id == account_id).limit(1)
             ).scalar_one_or_none()
             if row is None:
                 return None
+            opening = self.get_opening_balance(account_id, session)
+            if opening and any(key in fields and fields[key] != opening[opening_key]
+                               for key, opening_key in (("market", "market"), ("base_currency", "currency"))):
+                raise ValueError("Cannot change market or currency after confirming opening inventory")
             for key, value in fields.items():
                 setattr(row, key, value)
             row.updated_at = datetime.now()
-            session.commit()
+            session.flush()
             session.refresh(row)
             return row
 
@@ -133,6 +141,41 @@ class PortfolioRepository:
     # ------------------------------------------------------------------
     # Event writes
     # ------------------------------------------------------------------
+    def get_opening_balance(self, account_id: int, session: Any = None) -> Optional[Dict[str, Any]]:
+        if session is None:
+            with self.db.get_session() as owned:
+                return self.get_opening_balance(account_id, owned)
+        row = session.get(PortfolioOpeningBalance, account_id)
+        return json.loads(row.payload_json) if row else None
+
+    def ledger_fingerprint(self, account_id: int, session: Any = None) -> str:
+        if session is None:
+            with self.db.get_session() as owned:
+                return self.ledger_fingerprint(account_id, owned)
+        events = []
+        for model in (PortfolioTrade, PortfolioCashLedger, PortfolioCorporateAction, PortfolioOpeningBalance):
+            rows = session.execute(select(model).where(model.account_id == account_id)).scalars().all()
+            events.append(sorted([json.dumps({col.name: getattr(row, col.name) for col in model.__table__.columns},
+                                              sort_keys=True, default=str) for row in rows]))
+        return hashlib.sha256(json.dumps(events, sort_keys=True).encode()).hexdigest()
+
+    def get_funding_snapshot(self, account_id: int, as_of: date) -> Optional[Dict[str, Any]]:
+        with self.db.get_session() as session:
+            row = session.execute(select(PortfolioFundingSnapshot).where(
+                PortfolioFundingSnapshot.account_id == account_id,
+                PortfolioFundingSnapshot.as_of <= as_of,
+            ).order_by(PortfolioFundingSnapshot.as_of.desc(), PortfolioFundingSnapshot.id.desc()).limit(1)
+            ).scalar_one_or_none()
+            if not row:
+                return None
+            return {**json.loads(row.payload_json), "id": row.id,
+                    "ledger_unchanged": row.ledger_fingerprint == self.ledger_fingerprint(account_id, session)}
+
+    def _assert_after_opening_balance(self, session: Any, account_id: int, event_date: date) -> None:
+        opening = self.get_opening_balance(account_id, session)
+        if opening and event_date <= date.fromisoformat(opening["as_of"]):
+            raise ValueError("Event must be after the confirmed end-of-day opening balance; do not import older fills twice")
+
     @contextmanager
     def portfolio_write_session(self):
         session = self.db.get_session()
@@ -319,6 +362,7 @@ class PortfolioRepository:
         note: Optional[str] = None,
         dedup_hash: Optional[str] = None,
     ) -> PortfolioTrade:
+        self._assert_after_opening_balance(session, account_id, trade_date)
         row = PortfolioTrade(
             account_id=account_id,
             trade_uid=trade_uid,
@@ -363,6 +407,7 @@ class PortfolioRepository:
         currency: str,
         note: Optional[str] = None,
     ) -> PortfolioCashLedger:
+        self._assert_after_opening_balance(session, account_id, event_date)
         row = PortfolioCashLedger(
             account_id=account_id,
             event_date=event_date,
@@ -395,6 +440,7 @@ class PortfolioRepository:
         split_ratio: Optional[float] = None,
         note: Optional[str] = None,
     ) -> PortfolioCorporateAction:
+        self._assert_after_opening_balance(session, account_id, effective_date)
         row = PortfolioCorporateAction(
             account_id=account_id,
             symbol=symbol,

@@ -55,6 +55,13 @@ describe('portfolioFormat', () => {
     expect(getCsvCommitVariant({ accountId: 1, recordCount: 1, insertedCount: 1, duplicateCount: 0, failedCount: 0, dryRun: false, errors: [] }, false)).toBe('success');
   });
 
+  it('does not label stale or undated provider quotes as realtime', () => {
+    expect(getPositionPriceLabel({ ...pricedPosition, priceStale: true, priceDate: '2026-09-24' }))
+      .toBe('参考价 · 2026-09-24（已过期）');
+    expect(getPositionPriceLabel({ ...pricedPosition, priceStale: true, priceDate: null }))
+      .toBe('参考价 · 报价时间待核实');
+  });
+
   it('builds FX refresh feedback from refresh outcomes', () => {
     expect(buildFxRefreshFeedback({
       asOf: '2026-03-19',

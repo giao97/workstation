@@ -23,6 +23,7 @@ from src.notification import NotificationService
 from src.market_analyzer import MarketAnalyzer
 from src.report_language import normalize_report_language
 from src.search_service import SearchService
+from src.services.portfolio_allocation_report import append_allocation_report, build_allocation_report
 from src.analyzer import AnalysisResult, GeminiAnalyzer
 from src.llm.generation_backend import GenerationError
 from src.services.run_diagnostics import (
@@ -306,6 +307,16 @@ def run_market_review(
                 language=getattr(runtime_config, "report_language", "zh"),
                 root_title=review_text["root_title"],
             )
+            # Context-only/prewarm runs must not inject personal balances into LLM inputs.
+            if persist_history or save_report_file:
+                try:
+                    allocation = build_allocation_report(language=getattr(runtime_config, "report_language", "zh"))
+                    if allocation:
+                        market_review_payload["allocation_summary"] = allocation
+                        review_report = append_allocation_report(review_report, market_review_payload)
+                        market_review_payload["markdown_report"] = review_report
+                except Exception:
+                    logger.warning("Unable to load opted-in allocation plans", exc_info=True)
             markdown_report = _render_market_review_payload_markdown(
                 market_review_payload,
                 wrapper_title=review_text["root_title"],
@@ -519,6 +530,7 @@ def _render_market_review_payload_markdown(
     """Render Markdown from the structured market-review payload for file/push compatibility."""
     metadata = _market_review_region_metadata(payload.get("region"))
     body = _render_market_review_payload_body(payload)
+    body = append_allocation_report(body, payload)
     if wrapper_title:
         return f"{metadata}{wrapper_title}\n\n{body}".strip()
     return f"{metadata}{body}".strip()
@@ -533,7 +545,7 @@ def _render_market_review_merge_markdown(
     markets = payload.get("markets")
     if isinstance(markets, dict) and markets:
         return _render_market_review_payload_markdown(payload)
-    return _append_missing_sector_payload_block(review_report, payload)
+    return append_allocation_report(_append_missing_sector_payload_block(review_report, payload), payload)
 
 
 def _render_market_review_payload_body(payload: Dict[str, Any]) -> str:

@@ -272,6 +272,7 @@ export interface MarketReviewBreadth {
 }
 
 export interface MarketReviewPayload {
+  allocationSummary?: { title: string; markdown: string };
   version?: number;
   kind?: 'market_review' | string;
   region?: string;

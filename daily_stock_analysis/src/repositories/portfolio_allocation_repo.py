@@ -24,6 +24,10 @@ class PortfolioAllocationRepository:
         base_currency: str,
         target_total_value: float,
         targets: List[Dict[str, Any]],
+        account_id: Optional[int] = None,
+        ledger_complete: bool = False,
+        cash_reserve_amount: float = 0.0,
+        include_in_reports: bool = False,
     ) -> Tuple[PortfolioAllocationPlan, List[PortfolioAllocationTarget]]:
         with self.db.get_session() as session:
             plan = PortfolioAllocationPlan(
@@ -31,6 +35,10 @@ class PortfolioAllocationRepository:
                 owner_id=owner_id,
                 base_currency=base_currency,
                 target_total_value=target_total_value,
+                account_id=account_id,
+                ledger_complete=ledger_complete,
+                cash_reserve_amount=cash_reserve_amount,
+                include_in_reports=include_in_reports,
                 version=1,
                 is_active=True,
             )
@@ -55,6 +63,10 @@ class PortfolioAllocationRepository:
         base_currency: str,
         target_total_value: float,
         targets: List[Dict[str, Any]],
+        account_id: Optional[int] = None,
+        ledger_complete: bool = False,
+        cash_reserve_amount: float = 0.0,
+        include_in_reports: bool = False,
     ) -> Optional[Tuple[PortfolioAllocationPlan, List[PortfolioAllocationTarget]]]:
         with self.db.get_session() as session:
             plan = session.get(PortfolioAllocationPlan, plan_id)
@@ -64,6 +76,10 @@ class PortfolioAllocationRepository:
             plan.owner_id = owner_id
             plan.base_currency = base_currency
             plan.target_total_value = target_total_value
+            plan.account_id = account_id
+            plan.ledger_complete = ledger_complete
+            plan.cash_reserve_amount = cash_reserve_amount
+            plan.include_in_reports = include_in_reports
             plan.version = int(plan.version or 1) + 1
             plan.updated_at = datetime.now()
             target_rows = self._replace_targets_in_session(session, plan_id, targets)
@@ -151,6 +167,10 @@ class PortfolioAllocationRepository:
             "name": plan.name,
             "base_currency": plan.base_currency,
             "target_total_value": float(plan.target_total_value),
+            "account_id": plan.account_id,
+            "ledger_complete": bool(plan.ledger_complete),
+            "cash_reserve_amount": float(plan.cash_reserve_amount or 0),
+            "include_in_reports": bool(plan.include_in_reports),
             "version": int(plan.version or 1),
             "is_active": bool(plan.is_active),
             "created_at": plan.created_at.isoformat() if plan.created_at else None,

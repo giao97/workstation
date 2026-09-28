@@ -212,6 +212,12 @@ class PortfolioImportService:
                     continue
 
                 if dry_run:
+                    opening = self.repo.get_opening_balance(account_id)
+                    if opening:
+                        raw_date = record.get("trade_date")
+                        event_date = raw_date if isinstance(raw_date, date) else date.fromisoformat(str(raw_date))
+                        if event_date <= date.fromisoformat(opening["as_of"]):
+                            raise ValueError("Event must be after the confirmed end-of-day opening balance")
                     if trade_uid and trade_uid in seen_trade_uids:
                         duplicate_count += 1
                         continue

@@ -63,6 +63,7 @@ vi.mock('../../api/decisionSignals', () => ({
 
 vi.mock('../../api/portfolio', () => ({
   portfolioApi: {
+    getAllocationPlans: vi.fn().mockResolvedValue({ plans: [] }),
     getAccounts,
     getSnapshot,
     getRisk,

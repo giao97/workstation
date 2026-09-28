@@ -106,6 +106,19 @@ const noBreadthMarketReviewPayload: MarketReviewPayload = {
 };
 
 describe('MarketReviewReportView', () => {
+  it('shows the allocation appendix when structured market sections take precedence over Markdown', () => {
+    render(<MarketReviewReportView payload={{
+      kind: 'market_review', region: 'cn,us',
+      markets: {
+        cn: { title: 'A股', sections: [{ key: 'overview', title: '概览', markdown: '市场概览' }] },
+        us: { title: '美股', sections: [{ key: 'overview', title: '概览', markdown: 'US overview' }] },
+      },
+      allocationSummary: { title: '配置提醒', markdown: '现金预留 10,000；配置上限 5,000。' },
+    }} />);
+    expect(screen.getAllByText('配置提醒').length).toBeGreaterThan(0);
+    expect(screen.getByText('现金预留 10,000；配置上限 5,000。')).toBeInTheDocument();
+  });
+
   it('uses localized summary card labels and fallbacks for English reports', () => {
     render(
       <MarketReviewReportView

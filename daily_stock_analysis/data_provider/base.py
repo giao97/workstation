@@ -2067,23 +2067,9 @@ class DataFetcherManager:
 
     @staticmethod
     def _parse_realtime_timestamp(value: Any) -> Optional[datetime]:
-        if value in (None, ""):
-            return None
-        if isinstance(value, datetime):
-            parsed = value
-        else:
-            text = str(value).strip()
-            if not text:
-                return None
-            if text.endswith("Z"):
-                text = text[:-1] + "+00:00"
-            try:
-                parsed = datetime.fromisoformat(text)
-            except ValueError:
-                return None
-        if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
+        from .realtime_types import parse_quote_timestamp
+
+        return parse_quote_timestamp(value)
 
     @staticmethod
     def _realtime_fetcher_token(fetcher_name: str, **kw) -> str:
@@ -2128,10 +2114,11 @@ class DataFetcherManager:
 
         setattr(quote, "provider_timestamp", provider_dt.isoformat())
         fetched_dt = self._parse_realtime_timestamp(fetched_at) or datetime.now(timezone.utc)
-        stale_seconds = max(0, int((fetched_dt - provider_dt).total_seconds()))
+        age_seconds = int((fetched_dt - provider_dt).total_seconds())
+        stale_seconds = max(0, age_seconds)
         ttl = realtime_cache_ttl if realtime_cache_ttl is not None else 600
         setattr(quote, "stale_seconds", stale_seconds)
-        setattr(quote, "is_stale", stale_seconds > int(ttl))
+        setattr(quote, "is_stale", age_seconds < -60 or stale_seconds > int(ttl))
         return quote
     
     def get_realtime_quote(self, stock_code: str, *, log_final_failure: bool = True):

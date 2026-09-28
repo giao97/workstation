@@ -5,13 +5,16 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
-from datetime import date, timedelta
+from dataclasses import dataclass, replace
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from data_provider.base import canonical_stock_code, normalize_stock_code
+from data_provider.realtime_types import parse_quote_timestamp
 from src.config import get_config
 from src.repositories.portfolio_repo import (
     DuplicateTradeDedupHashError,
@@ -104,6 +107,8 @@ class _ResolvedPositionPrice:
     is_stale: bool
     is_available: bool
     provider: Optional[str] = None
+    timestamp: Optional[str] = None
+    fetched_at: Optional[str] = None
 
 
 class PortfolioService:
@@ -171,6 +176,12 @@ class PortfolioService:
             fields["is_active"] = bool(is_active)
         if not fields:
             raise ValueError("No fields provided for update")
+
+        opening = self.repo.get_opening_balance(account_id)
+        if opening and "market" in fields and fields["market"] != opening["market"]:
+            raise ValueError("Cannot change the market of an account with an opening balance")
+        if opening and "base_currency" in fields and fields["base_currency"] != opening["currency"]:
+            raise ValueError("Cannot change the currency of an account with an opening balance")
 
         row = self.repo.update_account(account_id, fields)
         if row is None:
@@ -738,7 +749,11 @@ class PortfolioService:
         event_priority = {"corp": 1, "trade": 2}
         events.sort(key=lambda item: (item[1], event_priority[item[0]], item[2]))
 
+        opening = self.repo.get_opening_balance(account_id, session)
         quantity_held = 0.0
+        if opening and date.fromisoformat(opening["as_of"]) <= as_of_date:
+            quantity_held = sum(item["quantity"] for item in opening["positions"]
+                                if (item["symbol"], opening["market"], opening["currency"]) == key)
         for event_type, event_date, _, event in events:
             if event_type == "corp":
                 action_type = (event.action_type or "").strip().lower()
@@ -782,6 +797,7 @@ class PortfolioService:
         cost_method: str,
         include_realtime: bool,
     ) -> Dict[str, Any]:
+        replay_fingerprint = self.repo.ledger_fingerprint(account.id)
         trades = self.repo.list_trades(account.id, as_of=as_of_date)
         cash_ledger = self.repo.list_cash_ledger(account.id, as_of=as_of_date)
         corporate_actions = self.repo.list_corporate_actions(account.id, as_of=as_of_date)
@@ -806,6 +822,19 @@ class PortfolioService:
 
         fifo_lots: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = defaultdict(list)
         avg_state: Dict[Tuple[str, str, str], _AvgState] = defaultdict(_AvgState)
+
+        opening = self.repo.get_opening_balance(account.id)
+        if opening and date.fromisoformat(opening["as_of"]) > as_of_date:
+            raise ValueError("Snapshot predates the opening balance; earlier account history is unavailable")
+        if opening:
+            cash_balances[opening["currency"]] = opening["cash_balance"]
+            for item in opening["positions"]:
+                key = (item["symbol"], opening["market"], opening["currency"])
+                fifo_lots[key].append({"symbol": key[0], "market": key[1], "currency": key[2],
+                                      "open_date": date.fromisoformat(opening["as_of"]),
+                                      "remaining_quantity": item["quantity"], "unit_cost": item["avg_cost"],
+                                      "source_trade_id": None})
+                avg_state[key] = _AvgState(item["quantity"], item["quantity"] * item["avg_cost"])
 
         for event_type, event_date, _, event in events:
             if event_type == "cash":
@@ -965,8 +994,16 @@ class PortfolioService:
         limitations = _merge_portfolio_limitations(
             _portfolio_limitations_for_market(account.market),
             position_limitations,
+            ["historical_realized_pnl_unavailable", "opening_fifo_lots_aggregated"] if opening else [],
         )
 
+        from src.services.portfolio_account_state_service import PortfolioAccountStateService
+
+        account_state = PortfolioAccountStateService(self.repo).get_state(account.id, as_of_date)
+        if replay_fingerprint != self.repo.ledger_fingerprint(account.id):
+            account_state["cash_confirmed"] = False
+            account_state["confirmed_cash_cap"] = None
+            limitations.append("ledger_changed_during_snapshot")
         account_payload = {
             "account_id": account.id,
             "account_name": account.name,
@@ -977,6 +1014,10 @@ class PortfolioService:
             "as_of": as_of_date.isoformat(),
             "cost_method": cost_method,
             "total_cash": round(total_cash_base, 6),
+            # Native balances let allocation consumers avoid unrelated historical
+            # P&L FX flags; public snapshot schemas keep their existing contract.
+            "cash_balances": dict(cash_balances),
+            "funding": account_state,
             "total_market_value": round(market_value_base, 6),
             "total_equity": round(total_equity_base, 6),
             "realized_pnl": round(realized_pnl_base, 6),
@@ -1078,12 +1119,17 @@ class PortfolioService:
 
             price_info = self._resolve_position_price(
                 symbol=symbol,
+                market=market,
                 as_of_date=as_of_date,
                 realtime_prices=realtime_prices,
                 include_realtime=include_realtime,
             )
             last_price = price_info.price
             limitations = _portfolio_limitations_for_market(market)
+            if not price_info.is_available:
+                limitations.append("position_price_missing")
+            elif price_info.is_stale:
+                limitations.append("position_price_time_unknown" if price_info.price_date is None else "position_price_stale")
 
             if price_info.is_available:
                 local_market_value = qty * float(last_price)
@@ -1126,6 +1172,8 @@ class PortfolioService:
                     "price_source": price_info.source,
                     "price_provider": price_info.provider,
                     "price_date": price_info.price_date.isoformat() if price_info.price_date else None,
+                    "price_timestamp": price_info.timestamp,
+                    "price_fetched_at": price_info.fetched_at,
                     "price_stale": price_info.is_stale,
                     "price_available": price_info.is_available,
                     "data_quality": "partial" if limitations else "ok",
@@ -1143,25 +1191,24 @@ class PortfolioService:
         *,
         symbol: str,
         as_of_date: date,
-        realtime_prices: Optional[Dict[str, Tuple[Optional[float], Optional[str]]]] = None,
+        market: str = "",
+        realtime_prices: Optional[Dict[str, Optional[_ResolvedPositionPrice]]] = None,
         include_realtime: bool = True,
     ) -> _ResolvedPositionPrice:
         today = date.today()
 
         if include_realtime and as_of_date == today:
             if realtime_prices is None:
-                realtime_price, provider = self._fetch_realtime_position_price(symbol)
+                realtime_price = self._fetch_realtime_position_price(symbol)
             else:
-                realtime_price, provider = realtime_prices.get(symbol, (None, None))
-            if realtime_price is not None and realtime_price > 0:
-                return _ResolvedPositionPrice(
-                    price=float(realtime_price),
-                    source="realtime_quote",
-                    price_date=today,
-                    is_stale=False,
-                    is_available=True,
-                    provider=provider,
-                )
+                realtime_price = realtime_prices.get(symbol)
+            if realtime_price is not None:
+                instant = parse_quote_timestamp(realtime_price.timestamp)
+                if instant is not None:
+                    market_zone = {"cn": "Asia/Shanghai", "hk": "Asia/Hong_Kong", "us": "America/New_York",
+                                   "jp": "Asia/Tokyo", "kr": "Asia/Seoul", "tw": "Asia/Taipei"}.get(market, "UTC")
+                    realtime_price = replace(realtime_price, price_date=instant.astimezone(ZoneInfo(market_zone)).date())
+                return realtime_price
 
         close = self.repo.get_latest_close_with_date(symbol=symbol, as_of=as_of_date)
         if close is not None:
@@ -1186,7 +1233,7 @@ class PortfolioService:
     def _prefetch_realtime_position_prices(
         self,
         symbols: Iterable[str],
-    ) -> Dict[str, Tuple[Optional[float], Optional[str]]]:
+    ) -> Dict[str, Optional[_ResolvedPositionPrice]]:
         unique_symbols = sorted({symbol for symbol in symbols if symbol})
         if not unique_symbols:
             return {}
@@ -1207,7 +1254,7 @@ class PortfolioService:
             symbol = unique_symbols[0]
             return {symbol: self._fetch_realtime_position_price(symbol)}
 
-        results: Dict[str, Tuple[Optional[float], Optional[str]]] = {}
+        results: Dict[str, Optional[_ResolvedPositionPrice]] = {}
         max_workers = min(PORTFOLIO_REALTIME_QUOTE_MAX_WORKERS, len(unique_symbols))
         with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="portfolio-quote") as executor:
             futures = {
@@ -1220,12 +1267,12 @@ class PortfolioService:
                     results[symbol] = future.result()
                 except Exception as exc:  # pragma: no cover - defensive guard for patched fetchers
                     logger.warning("Failed to prefetch realtime portfolio price for %s: %s", symbol, exc)
-                    results[symbol] = (None, None)
+                    results[symbol] = None
 
         return results
 
     @staticmethod
-    def _fetch_realtime_position_price(symbol: str) -> Tuple[Optional[float], Optional[str]]:
+    def _fetch_realtime_position_price(symbol: str) -> Optional[_ResolvedPositionPrice]:
         try:
             from data_provider.base import DataFetcherManager
 
@@ -1233,23 +1280,34 @@ class PortfolioService:
             quote = fetcher_manager.get_realtime_quote(symbol, log_final_failure=False)
         except Exception as exc:
             logger.warning("Failed to fetch realtime portfolio price for %s: %s", symbol, exc)
-            return None, None
+            return None
 
         if quote is None:
-            return None, None
+            return None
 
         price = getattr(quote, "price", None)
         try:
             numeric_price = float(price)
         except (TypeError, ValueError):
-            return None, None
+            return None
 
-        if numeric_price <= 0:
-            return None, None
+        if not math.isfinite(numeric_price) or numeric_price <= 0:
+            return None
 
         source = getattr(quote, "source", None)
         provider = getattr(source, "value", None) or (str(source) if source is not None else None)
-        return numeric_price, provider
+        instant = parse_quote_timestamp(getattr(quote, "provider_timestamp", None))
+        fetched = parse_quote_timestamp(getattr(quote, "fetched_at", None))
+        age = (datetime.now(timezone.utc) - instant).total_seconds() if instant is not None else None
+        stale = (age is None or age < -60 or age > get_config().realtime_cache_ttl
+                 or bool(getattr(quote, "is_stale", False)))
+        return _ResolvedPositionPrice(
+            price=numeric_price, source="realtime_quote", provider=provider,
+            price_date=instant.date() if instant is not None else None,
+            timestamp=instant.isoformat() if instant is not None else None,
+            fetched_at=fetched.isoformat() if fetched is not None else None,
+            is_stale=stale, is_available=True,
+        )
 
     @staticmethod
     def _normalize_symbol_for_storage(symbol: str) -> str:
@@ -1451,7 +1509,8 @@ class PortfolioService:
             as_of=as_of_date,
         )
         if direct is not None and direct.rate > 0:
-            return float(amount) * float(direct.rate), bool(direct.is_stale), "direct_rate"
+            stale = bool(direct.is_stale) or direct.rate_date < as_of_date
+            return float(amount) * float(direct.rate), stale, "direct_rate"
 
         inverse = self.repo.get_latest_fx_rate(
             from_currency=to_norm,
@@ -1459,7 +1518,8 @@ class PortfolioService:
             as_of=as_of_date,
         )
         if inverse is not None and inverse.rate > 0:
-            return float(amount) / float(inverse.rate), bool(inverse.is_stale), "inverse_rate"
+            stale = bool(inverse.is_stale) or inverse.rate_date < as_of_date
+            return float(amount) / float(inverse.rate), stale, "inverse_rate"
 
         # P0 fallback: keep pipeline available even when FX cache is missing.
         return float(amount), True, "fallback_1_to_1"
@@ -1479,6 +1539,33 @@ class PortfolioService:
             to_currency=to_currency,
             as_of_date=as_of_date,
         )
+
+    def convert_amount_for_allocation(
+        self, *, amount: float, from_currency: str, to_currency: str, as_of_date: date,
+    ) -> Tuple[float, bool, Optional[str]]:
+        """Daily FX is an explicit estimate, never an executable conversion quote.
+
+        Accept today or the preceding weekday (Fri over weekends/Mon). Longer
+        holiday gaps remain blocked until refreshed; accounting behavior is unchanged.
+        """
+        source = self._normalize_currency(from_currency)
+        target = self._normalize_currency(to_currency)
+        if not math.isfinite(amount):
+            return 0.0, False, None
+        if abs(amount) <= EPS or source == target:
+            return float(amount), True, None
+        earliest = as_of_date - timedelta(days=1)
+        while earliest.weekday() >= 5:
+            earliest -= timedelta(days=1)
+        for left, right, inverse in ((source, target, False), (target, source, True)):
+            rate = self.repo.get_latest_fx_rate(from_currency=left, to_currency=right, as_of=as_of_date)
+            if rate is None or not math.isfinite(float(rate.rate)) or rate.rate <= 0:
+                continue
+            if bool(rate.is_stale) or not earliest <= rate.rate_date <= as_of_date:
+                continue
+            value = amount / rate.rate if inverse else amount * rate.rate
+            return float(value), True, f"fx_reference:{source}/{target}:{rate.rate_date.isoformat()}"
+        return 0.0, False, None
 
     def _list_account_refresh_fx_currencies(
         self,
@@ -1539,21 +1626,22 @@ class PortfolioService:
         }
         for from_currency in refresh_currencies:
             try:
-                rate = self._fetch_fx_rate_from_yfinance(
+                observation = self._fetch_fx_rate_from_yfinance(
                     from_currency=from_currency,
                     to_currency=base_currency,
                     as_of_date=as_of_date,
                 )
-                if rate is not None and rate > 0:
+                if observation is not None:
+                    rate, rate_date = observation
                     self.repo.save_fx_rate(
                         from_currency=from_currency,
                         to_currency=base_currency,
-                        rate_date=as_of_date,
+                        rate_date=rate_date,
                         rate=rate,
                         source="yfinance",
                         is_stale=False,
                     )
-                    summary["updated_count"] += 1
+                    summary["stale_count" if rate_date < as_of_date else "updated_count"] += 1
                     continue
             except Exception as exc:
                 logger.warning(
@@ -1573,7 +1661,7 @@ class PortfolioService:
                 self.repo.save_fx_rate(
                     from_currency=from_currency,
                     to_currency=base_currency,
-                    rate_date=as_of_date,
+                    rate_date=fallback.rate_date,
                     rate=float(fallback.rate),
                     source=(fallback.source or "cache_fallback"),
                     is_stale=True,
@@ -1589,7 +1677,7 @@ class PortfolioService:
         from_currency: str,
         to_currency: str,
         as_of_date: date,
-    ) -> Optional[float]:
+    ) -> Optional[Tuple[float, date]]:
         """Fetch latest available FX close rate around as_of date."""
         if yf is None:
             return None
@@ -1603,13 +1691,14 @@ class PortfolioService:
         )
         if history is None or history.empty or "Close" not in history:
             return None
-        close = history["Close"].dropna()
+        close = history["Close"].dropna().sort_index()
+        close = close[[index.date() <= as_of_date for index in close.index]]
         if close.empty:
             return None
         value = float(close.iloc[-1])
-        if value <= 0:
+        if not math.isfinite(value) or value <= 0:
             return None
-        return value
+        return value, close.index[-1].date()
 
     def _require_active_account(self, account_id: int) -> Any:
         account = self.repo.get_account(account_id, include_inactive=False)

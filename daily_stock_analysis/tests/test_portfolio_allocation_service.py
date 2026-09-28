@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import date
 from pathlib import Path
 
@@ -22,7 +23,7 @@ class _FakePortfolioService:
                 {
                     "account_id": 1,
                     "base_currency": "CNY",
-                    "total_cash": 100_000,
+                    "total_cash": 150_000,
                     "positions": [
                         {
                             "symbol": "VOO",
@@ -114,9 +115,12 @@ class PortfolioAllocationServiceTest(unittest.TestCase):
             base_currency="CNY",
             target_total_value=1_000_000,
             targets=self._targets(),
+            ledger_complete=True,
+            include_in_reports=True,
         )
         self.assertEqual(plan["version"], 1)
         self.assertEqual(len(plan["targets"]), 3)
+        self.assertTrue(self.service.get_plan(plan["id"])["include_in_reports"])
 
         status = self.service.evaluate_plan(plan["id"], as_of=date(2026, 9, 25))
         self.assertIsNotNone(status)
@@ -136,6 +140,62 @@ class PortfolioAllocationServiceTest(unittest.TestCase):
         self.assertEqual(updated["version"], 2)
         self.assertTrue(self.service.deactivate_plan(plan["id"]))
         self.assertIsNone(self.service.get_plan(plan["id"]))
+
+    def test_account_conversion_failure_survives_identity_conversion(self) -> None:
+        snapshot = self.service.portfolio_service.get_portfolio_snapshot()
+        snapshot["accounts"][0]["fx_stale"] = True
+        plan = self.service.create_plan(name="test", base_currency="CNY", target_total_value=1_000_000,
+                                        targets=self._targets(), ledger_complete=True)
+        with patch.object(self.service.portfolio_service, "get_portfolio_snapshot", return_value=snapshot):
+            status = self.service.evaluate_plan(plan["id"])
+        self.assertEqual(status["targets"][1]["action"], "review")
+        self.assertIsNone(status["available_cash"])
+
+    def test_dated_fx_cache_is_stale_even_when_provider_flag_is_fresh(self) -> None:
+        from src.services.portfolio_service import PortfolioService
+        portfolio = PortfolioService()
+        portfolio.repo.save_fx_rate(from_currency="USD", to_currency="CNY", rate_date=date(2026, 9, 24),
+                                    rate=7.0, source="test", is_stale=False)
+        for source, target in (("USD", "CNY"), ("CNY", "USD")):
+            _, stale, _ = portfolio.convert_amount(amount=100, from_currency=source, to_currency=target,
+                                                   as_of_date=date(2026, 9, 25))
+            self.assertTrue(stale)
+        _, stale, _ = portfolio.convert_amount(amount=100, from_currency="USD", to_currency="CNY",
+                                               as_of_date=date(2026, 9, 24))
+        self.assertFalse(stale)
+
+    def test_evaluation_cannot_override_plan_scope(self) -> None:
+        plan = self.service.create_plan(name="test", base_currency="CNY", target_total_value=1_000_000,
+                                        targets=self._targets())
+        with self.assertRaisesRegex(ValueError, "scope"):
+            self.service.evaluate_plan(plan["id"], account_id=7)
+        scoped = self.service.create_plan(name="test", base_currency="CNY", target_total_value=1_000_000,
+                                          targets=self._targets(), account_id=7)
+        with patch.object(self.service.portfolio_service, "get_portfolio_snapshot",
+                          wraps=self.service.portfolio_service.get_portfolio_snapshot) as get_snapshot:
+            self.service.evaluate_plan(scoped["id"])
+        self.assertEqual(get_snapshot.call_args.kwargs["account_id"], 7)
+
+    def test_old_schema_is_upgraded_without_confirming_unknown_balances(self) -> None:
+        from sqlalchemy import inspect
+        db = self.service.repo.db
+        old_plan = self.service.create_plan(name="existing", base_currency="CNY", target_total_value=1_000_000,
+                                            targets=self._targets(), ledger_complete=True, include_in_reports=True)
+        with db._engine.begin() as connection:
+            for column in ("account_id", "ledger_complete", "cash_reserve_amount", "include_in_reports"):
+                connection.exec_driver_sql(f"ALTER TABLE portfolio_allocation_plans DROP COLUMN {column}")
+        db._ensure_portfolio_allocation_schema_record()
+        db._ensure_portfolio_allocation_schema_record()
+        columns = {column["name"] for column in inspect(db._engine).get_columns("portfolio_allocation_plans")}
+        self.assertTrue({"account_id", "ledger_complete", "cash_reserve_amount", "include_in_reports"} <= columns)
+        migrated = self.service.get_plan(old_plan["id"])
+        self.assertFalse(migrated["ledger_complete"])
+        self.assertFalse(migrated["include_in_reports"])
+        self.assertEqual(len(migrated["targets"]), 3)
+        plan = self.service.create_plan(name="migrated", base_currency="CNY", target_total_value=1_000_000,
+                                        targets=self._targets())
+        self.assertFalse(plan["ledger_complete"])
+        self.assertFalse(plan["include_in_reports"])
 
     def test_rejects_invalid_total_and_duplicate_symbol(self) -> None:
         with self.assertRaisesRegex(ValueError, "sum to 100"):

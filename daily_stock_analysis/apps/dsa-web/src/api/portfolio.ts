@@ -2,6 +2,10 @@ import apiClient from './index';
 import { toCamelCase } from './utils';
 import type { TaskAccepted } from '../types/analysis';
 import type {
+  AllocationPlan,
+  AllocationPlanWrite,
+  AllocationStatus,
+  OpeningBalanceWrite, OpeningPreview, FundingWrite, AccountState,
   PortfolioAccountItem,
   PortfolioAccountCreateRequest,
   PortfolioAccountListResponse,
@@ -106,6 +110,64 @@ function buildEventParams(query: EventQuery): Record<string, string | number> {
 }
 
 export const portfolioApi = {
+  async getAccountState(accountId: number): Promise<AccountState> {
+    return toCamelCase((await apiClient.get(`/api/v1/portfolio/accounts/${accountId}/state`)).data);
+  },
+
+  async previewOpeningBalance(accountId: number, value: OpeningBalanceWrite): Promise<OpeningPreview> {
+    const body = openingPayload(value);
+    return toCamelCase((await apiClient.post(`/api/v1/portfolio/accounts/${accountId}/opening-balance/preview`, body)).data);
+  },
+
+  async commitOpeningBalance(accountId: number, value: OpeningBalanceWrite, previewToken: string): Promise<void> {
+    await apiClient.post(`/api/v1/portfolio/accounts/${accountId}/opening-balance`, {
+      ...openingPayload(value), preview_token: previewToken, confirmed: true,
+    });
+  },
+
+  async saveFunding(accountId: number, value: FundingWrite): Promise<void> {
+    await apiClient.post(`/api/v1/portfolio/accounts/${accountId}/funding`, {
+      as_of: value.asOf, settled_cash: value.settledCash, available_cash: value.availableCash,
+      planned_deposit: value.plannedDeposit, planned_deposit_date: value.plannedDepositDate,
+    });
+  },
+
+  async getAllocationPlans(): Promise<{ plans: Omit<AllocationPlan, 'targets'>[] }> {
+    const response = await apiClient.get('/api/v1/portfolio/allocation-plans');
+    return toCamelCase(response.data);
+  },
+
+  async getAllocationPlan(id: number): Promise<AllocationPlan> {
+    const response = await apiClient.get(`/api/v1/portfolio/allocation-plans/${id}`);
+    return toCamelCase(response.data);
+  },
+
+  async saveAllocationPlan(plan: AllocationPlanWrite, id?: number): Promise<AllocationPlan> {
+    const payload = {
+      name: plan.name, owner_id: plan.ownerId, base_currency: plan.baseCurrency,
+      target_total_value: plan.targetTotalValue, account_id: plan.accountId,
+      ledger_complete: plan.ledgerComplete, cash_reserve_amount: plan.cashReserveAmount,
+      include_in_reports: plan.includeInReports,
+      targets: plan.targets.map((target, index) => ({
+        key: target.key, name: target.name, source: target.source, policy: target.policy,
+        market: target.market, symbols: target.symbols, target_pct: target.targetPct,
+        min_pct: target.minPct, max_pct: target.maxPct, batch_amount: target.batchAmount,
+        current_amount: target.currentAmount, sort_order: index, note: target.note,
+      })),
+    };
+    const response = id
+      ? await apiClient.put(`/api/v1/portfolio/allocation-plans/${id}`, payload)
+      : await apiClient.post('/api/v1/portfolio/allocation-plans', payload);
+    return toCamelCase(response.data);
+  },
+
+  async getAllocationStatus(id: number, query: SnapshotQuery = {}): Promise<AllocationStatus> {
+    const response = await apiClient.get(`/api/v1/portfolio/allocation-plans/${id}/status`, {
+      params: buildSnapshotParams(query),
+    });
+    return toCamelCase(response.data);
+  },
+
   async getAccounts(includeInactive = false): Promise<PortfolioAccountListResponse> {
     const response = await apiClient.get<Record<string, unknown>>('/api/v1/portfolio/accounts', {
       params: { include_inactive: includeInactive },
@@ -287,3 +349,10 @@ export const portfolioApi = {
     return toCamelCase<PortfolioImportCommitResponse>(response.data);
   },
 };
+
+function openingPayload(value: OpeningBalanceWrite) {
+  return { as_of: value.asOf, cash_balance: value.cashBalance,
+    reported_market_value: value.reportedMarketValue, reported_equity: value.reportedEquity,
+    positions: value.positions.map((p) => ({ symbol: p.symbol, quantity: p.quantity,
+      avg_cost: p.avgCost, reported_market_value: p.reportedMarketValue })) };
+}

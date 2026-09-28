@@ -7,6 +7,8 @@ import type { ParsedApiError } from '../api/error';
 import { getParsedApiError } from '../api/error';
 import { ApiErrorAlert, Card, Badge, ConfirmDialog, EmptyState, InlineAlert } from '../components/common';
 import { PortfolioSignalSummary } from '../components/decision-signals/DecisionSignalDisplay';
+import { AllocationPanel } from '../components/portfolio/AllocationPanel';
+import { AccountStatePanel } from '../components/portfolio/AccountStatePanel';
 import { useUiLanguage } from '../contexts/UiLanguageContext';
 import { formatUiText } from '../i18n/uiText';
 import { PORTFOLIO_TEXT } from '../locales/featureText';
@@ -1176,6 +1178,9 @@ const PortfolioPage: React.FC = () => {
           ) : null}
         </Card>
       </section>
+
+      <AccountStatePanel accounts={accounts} onSaved={refreshPortfolioData} />
+      <AllocationPanel accounts={accounts} snapshot={snapshot} costMethod={costMethod} />
 
       <section className="grid grid-cols-1 xl:grid-cols-3 gap-3">
         <Card className="xl:col-span-2" padding="md">

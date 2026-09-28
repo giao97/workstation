@@ -31,6 +31,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Optional, Dict, Any, List, Tuple
 
 import pandas as pd
@@ -60,6 +61,14 @@ RealtimeQuote = UnifiedRealtimeQuote
 
 
 logger = logging.getLogger(__name__)
+
+
+def _cn_quote_timestamp(value: str, date_format: str) -> Optional[str]:
+    try:
+        return datetime.strptime(value.strip(), date_format).replace(tzinfo=ZoneInfo("Asia/Shanghai")).isoformat()
+    except (ValueError, TypeError, AttributeError):
+        return None
+
 
 SINA_REALTIME_ENDPOINT = "hq.sinajs.cn/list"
 TENCENT_REALTIME_ENDPOINT = "qt.gtimg.cn/q"
@@ -1081,7 +1090,7 @@ class AkshareFetcher(BaseFetcher):
             return None
         elif _is_hk_code(stock_code):
             return self._get_hk_realtime_quote(stock_code)
-        elif _is_etf_code(stock_code):
+        elif _is_etf_code(stock_code) and source not in {"tencent", "sina"}:
             source_key = "akshare_etf"
             if not circuit_breaker.is_available(source_key):
                 logger.info(f"[熔断] 数据源 {source_key} 处于熔断状态，跳过")
@@ -1318,6 +1327,9 @@ class AkshareFetcher(BaseFetcher):
                 code=stock_code,
                 name=fields[0],
                 source=RealtimeSource.AKSHARE_SINA,
+                market="cn",
+                currency="CNY",
+                provider_timestamp=_cn_quote_timestamp(f"{fields[30]} {fields[31]}", "%Y-%m-%d %H:%M:%S"),
                 price=price,
                 change_pct=change_pct,
                 change_amount=change_amount,
@@ -1463,6 +1475,9 @@ class AkshareFetcher(BaseFetcher):
                 code=stock_code,
                 name=fields[1] if len(fields) > 1 else "",
                 source=RealtimeSource.TENCENT,
+                market="cn",
+                currency="CNY",
+                provider_timestamp=_cn_quote_timestamp(fields[30], "%Y%m%d%H%M%S"),
                 price=safe_float(fields[3]),
                 change_pct=safe_float(fields[32]),
                 change_amount=safe_float(fields[31]) if len(fields) > 31 else None,

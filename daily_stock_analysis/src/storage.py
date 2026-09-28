@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 CURRENT_SCHEMA_VERSION = "2026-06-05-create-all-baseline"
 FINANCIAL_RESEARCH_SCHEMA_VERSION = "2026-08-30-financial-research-snapshots-v1"
-PORTFOLIO_ALLOCATION_SCHEMA_VERSION = "2026-09-25-portfolio-allocation-plan-v1"
+PORTFOLIO_ALLOCATION_SCHEMA_VERSION = "2026-09-25-portfolio-allocation-plan-v2"
 INTELLIGENCE_ITEM_NULL_SCOPE_VALUE = "__dsa_null_scope__"
 
 # SQLAlchemy ORM 基类
@@ -583,6 +583,29 @@ class PortfolioAccount(Base):
     )
 
 
+class PortfolioOpeningBalance(Base):
+    """Confirmed end-of-day starting inventory; never a synthetic trade or deposit."""
+
+    __tablename__ = 'portfolio_opening_balances'
+    account_id = Column(Integer, ForeignKey('portfolio_accounts.id'), primary_key=True)
+    as_of = Column(Date, nullable=False)
+    payload_json = Column(Text, nullable=False)
+    fingerprint = Column(String(64), nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+
+
+class PortfolioFundingSnapshot(Base):
+    """User-confirmed cash availability, separate from ledger and future funding."""
+
+    __tablename__ = 'portfolio_funding_snapshots'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(Integer, ForeignKey('portfolio_accounts.id'), nullable=False, index=True)
+    as_of = Column(Date, nullable=False)
+    payload_json = Column(Text, nullable=False)
+    ledger_fingerprint = Column(String(64), nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+
+
 class PortfolioTrade(Base):
     """Executed trade events used as the source of truth for replay."""
 
@@ -772,6 +795,10 @@ class PortfolioAllocationPlan(Base):
     name = Column(String(96), nullable=False)
     base_currency = Column(String(8), nullable=False, default='CNY')
     target_total_value = Column(Float, nullable=False)
+    account_id = Column(Integer, nullable=True)
+    ledger_complete = Column(Boolean, nullable=False, default=False, server_default='0')
+    cash_reserve_amount = Column(Float, nullable=False, default=0, server_default='0')
+    include_in_reports = Column(Boolean, nullable=False, default=False, server_default='0')
     version = Column(Integer, nullable=False, default=1)
     is_active = Column(Boolean, nullable=False, default=True, index=True)
     created_at = Column(DateTime, default=datetime.now, nullable=False, index=True)
@@ -1550,9 +1577,25 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
 
     def _ensure_portfolio_allocation_schema_record(self) -> None:
         """Record the additive target-allocation schema idempotently."""
+        table = PortfolioAllocationPlan.__tablename__
+        existing = {column['name'] for column in inspect(self._engine).get_columns(table)}
+        columns = {
+            'account_id': 'INTEGER',
+            'ledger_complete': 'BOOLEAN NOT NULL DEFAULT FALSE',
+            'cash_reserve_amount': 'FLOAT NOT NULL DEFAULT 0',
+            'include_in_reports': 'BOOLEAN NOT NULL DEFAULT FALSE',
+        }
+        for column, definition in columns.items():
+            if column not in existing:
+                try:
+                    with self._engine.begin() as connection:
+                        connection.exec_driver_sql(f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
+                except OperationalError as exc:
+                    if not self._is_sqlite_duplicate_column_error(exc, column):
+                        raise
         values = {
             "version": PORTFOLIO_ALLOCATION_SCHEMA_VERSION,
-            "description": "Add versioned portfolio allocation plans and targets",
+            "description": "Add allocation scope, ledger confirmation, cash reserve and report opt-in",
         }
         session = self._SessionLocal()
         try:
