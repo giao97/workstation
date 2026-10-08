@@ -27,6 +27,7 @@ from sqlalchemy import (
     Column,
     String,
     Float,
+    Numeric,
     Boolean,
     Date,
     DateTime,
@@ -284,6 +285,46 @@ class IntelligenceItem(Base):
         Index('ix_intel_item_scope_time', 'scope_type', 'scope_value', 'market', 'published_at'),
         Index('ix_intel_item_fetch_time', 'fetched_at'),
     )
+
+
+class MarketNewsEvidence(Base):
+    """Immutable news versions; first_seen_at is UTC, not publication time."""
+    __tablename__ = 'market_news_evidence'
+    evidence_id = Column(String(64), primary_key=True)
+    first_seen_at = Column(DateTime, nullable=False)
+    payload_json = Column(Text, nullable=False)
+
+
+class MarketEventBrief(Base):
+    """Append-only research snapshots, independent from orders and signals."""
+    __tablename__ = 'market_event_briefs'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    request_key = Column(String(64), nullable=False, unique=True)
+    market = Column(String(16), nullable=False, index=True)
+    captured_at = Column(DateTime, nullable=False, index=True)
+    payload_json = Column(Text, nullable=False)
+
+
+class MarketEventVerification(Base):
+    """Human attestations with evidence; never silently rewrite old briefs."""
+    __tablename__ = 'market_event_verifications'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_key = Column(String(64), nullable=False, index=True)
+    brief_id = Column(Integer, ForeignKey('market_event_briefs.id'), nullable=False)
+    checked_at = Column(DateTime, nullable=False)
+    payload_json = Column(Text, nullable=False)
+
+
+class EtfCompositionSnapshot(Base):
+    """Append-only manually reviewed composition evidence, not portfolio positions."""
+    __tablename__ = 'etf_composition_snapshots'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    content_hash = Column(String(64), nullable=False, unique=True)
+    fund_symbol = Column(String(16), nullable=False, index=True)
+    fund_market = Column(String(16), nullable=False)
+    holdings_as_of = Column(Date, nullable=False, index=True)
+    recorded_at = Column(DateTime, nullable=False)
+    payload_json = Column(Text, nullable=False)
 
 
 class FundamentalSnapshot(Base):
@@ -625,6 +666,10 @@ class PortfolioTrade(Base):
     tax = Column(Float, default=0.0)
     note = Column(String(255))
     dedup_hash = Column(String(64), index=True)
+    executed_at = Column(DateTime)  # UTC; null means the execution time is unknown.
+    fee_status = Column(String(16), nullable=False, default='unknown')
+    revision = Column(Integer, nullable=False, default=1)
+    intent_id = Column(Integer, ForeignKey('portfolio_purchase_intents.id'))
     created_at = Column(DateTime, default=datetime.now, index=True)
 
     __table_args__ = (
@@ -632,6 +677,68 @@ class PortfolioTrade(Base):
         UniqueConstraint('account_id', 'dedup_hash', name='uix_portfolio_trade_dedup_hash'),
         Index('ix_portfolio_trade_account_date', 'account_id', 'trade_date'),
     )
+
+
+class PortfolioBudgetPeriod(Base):
+    """Explicit investment budget, never a deposit or a brokerage balance."""
+
+    __tablename__ = 'portfolio_budget_periods'
+    id = Column(Integer, primary_key=True)
+    account_id = Column(Integer, ForeignKey('portfolio_accounts.id'), nullable=False, index=True)
+    name = Column(String(64), nullable=False)
+    currency = Column(String(8), nullable=False)
+    timezone = Column(String(64), nullable=False)
+    start_date = Column(Date, nullable=False)
+    end_date = Column(Date, nullable=False)
+    amount = Column(Numeric(24, 8), nullable=False)
+    symbols_json = Column(Text, nullable=False)
+    ledger_complete = Column(Boolean, nullable=False, default=False)
+    request_key = Column(String(128), nullable=False, unique=True)
+
+
+
+
+class PortfolioPurchaseIntent(Base):
+    """User-reported plan/order only. This table cannot create executions."""
+
+    __tablename__ = 'portfolio_purchase_intents'
+    id = Column(Integer, primary_key=True)
+    budget_id = Column(Integer, ForeignKey('portfolio_budget_periods.id'), nullable=False, index=True)
+    symbol = Column(String(16), nullable=False)
+    quantity = Column(Numeric(24, 8), nullable=False)
+    limit_price = Column(Numeric(24, 8), nullable=False)
+    fee_reserve = Column(Numeric(24, 8), nullable=False)
+    fx_rate = Column(Numeric(24, 8), nullable=False)
+    status = Column(String(24), nullable=False, default='planned')
+    expires_at = Column(DateTime, nullable=False)
+    request_key = Column(String(128), nullable=False, unique=True)
+    revision = Column(Integer, nullable=False, default=1)
+
+
+class PortfolioBudgetTradeAdjustment(Base):
+    """Confirmed conversion or explicit exclusion of an existing ledger trade."""
+
+    __tablename__ = 'portfolio_budget_trade_adjustments'
+    id = Column(Integer, primary_key=True)
+    budget_id = Column(Integer, ForeignKey('portfolio_budget_periods.id'), nullable=False)
+    trade_id = Column(Integer, ForeignKey('portfolio_trades.id'), nullable=False)
+    fx_rate = Column(Numeric(24, 8))
+    excluded = Column(Boolean, nullable=False, default=False)
+    reason = Column(String(255), nullable=False)
+    __table_args__ = (UniqueConstraint('budget_id', 'trade_id'),)
+
+
+class PortfolioAuditEvent(Base):
+    """Append-only facts retained even when the legacy ledger deletes a row."""
+
+    __tablename__ = 'portfolio_audit_events'
+    id = Column(Integer, primary_key=True)
+    account_id = Column(Integer, nullable=False, index=True)
+    entity = Column(String(32), nullable=False)
+    entity_id = Column(Integer, nullable=False)
+    action = Column(String(32), nullable=False)
+    payload_json = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=utc_naive_now)
 
 
 class PortfolioCashLedger(Base):
@@ -841,6 +948,25 @@ class PortfolioAllocationTarget(Base):
         CheckConstraint('batch_amount IS NULL OR batch_amount > 0', name='ck_portfolio_allocation_batch_positive'),
         CheckConstraint('current_amount IS NULL OR current_amount >= 0', name='ck_portfolio_allocation_current_nonnegative'),
         Index('ix_portfolio_allocation_target_plan_order', 'plan_id', 'sort_order'),
+    )
+
+
+class PortfolioAllocationReview(Base):
+    """Append-only research decisions, independent of cash, orders and trades."""
+
+    __tablename__ = 'portfolio_allocation_reviews'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    plan_id = Column(Integer, ForeignKey('portfolio_allocation_plans.id'), nullable=False)
+    target_key = Column(String(64), nullable=False)
+    horizon = Column(String(16), nullable=False)
+    revision = Column(Integer, nullable=False)
+    request_key = Column(String(64), nullable=False)
+    payload_json = Column(Text, nullable=False)
+    __table_args__ = (
+        UniqueConstraint('plan_id', 'request_key', name='uix_allocation_review_request'),
+        UniqueConstraint('plan_id', 'target_key', 'horizon', 'revision', name='uix_allocation_review_revision'),
+        CheckConstraint("horizon IN ('long_term', 'tactical')", name='ck_allocation_review_horizon'),
+        Index('ix_allocation_review_target', 'plan_id', 'target_key', 'id'),
     )
 
 
@@ -1245,6 +1371,33 @@ class DecisionSignalRecord(Base):
     )
 
 
+class PaperExperimentRecord(Base):
+    """Immutable prospective research assumptions, never a brokerage ledger."""
+
+    __tablename__ = "paper_experiments"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    request_key = Column(String(64), nullable=False, unique=True)
+    signal_id = Column(Integer, nullable=False, index=True)
+    captured_at = Column(DateTime, nullable=False, default=utc_naive_now)
+    snapshot_json = Column(Text, nullable=False)
+    assumptions_json = Column(Text, nullable=False)
+    snapshot_hash = Column(String(64), nullable=False)
+
+
+class PaperOutcomeRecord(Base):
+    """First terminal observation per horizon; later downloads cannot rewrite it."""
+
+    __tablename__ = "paper_outcomes"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    experiment_id = Column(Integer, ForeignKey("paper_experiments.id"), nullable=False)
+    horizon = Column(Integer, nullable=False)
+    engine_version = Column(String(32), nullable=False)
+    result_json = Column(Text, nullable=False)
+    evidence_json = Column(Text, nullable=False)
+    observed_at = Column(DateTime, nullable=False, default=utc_naive_now)
+    __table_args__ = (UniqueConstraint("experiment_id", "horizon", "engine_version", name="uq_paper_outcome"),)
+
+
 class DecisionSignalOutcomeRecord(Base):
     """Signal-level forward outcome for Issue #1390 P5."""
 
@@ -1509,6 +1662,7 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             self._ensure_schema_migration_record()
             self._ensure_financial_research_schema_record()
             self._ensure_portfolio_allocation_schema_record()
+            self._ensure_portfolio_execution_columns()
             self._ensure_intelligence_items_unique_index()
 
             self._initialized = True
@@ -1574,6 +1728,24 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             raise
         finally:
             session.close()
+
+    def _ensure_portfolio_execution_columns(self) -> None:
+        """Additive migration; historical zero fees remain explicitly unverified."""
+        table = PortfolioTrade.__tablename__
+        existing = {c['name'] for c in inspect(self._engine).get_columns(table)}
+        for column, definition in {
+            'executed_at': 'TIMESTAMP',
+            'fee_status': "VARCHAR(16) NOT NULL DEFAULT 'unknown'",
+            'revision': 'INTEGER NOT NULL DEFAULT 1',
+            'intent_id': 'INTEGER',
+        }.items():
+            if column not in existing:
+                try:
+                    with self._engine.begin() as connection:
+                        connection.exec_driver_sql(f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
+                except OperationalError as exc:
+                    if not self._is_sqlite_duplicate_column_error(exc, column):
+                        raise
 
     def _ensure_portfolio_allocation_schema_record(self) -> None:
         """Record the additive target-allocation schema idempotently."""

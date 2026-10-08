@@ -53,7 +53,8 @@ describe('DecisionSignalCard', () => {
     renderCard(onSelect);
 
     expect(screen.getByText('贵州茅台').closest('button')).toBeNull();
-    expect(screen.getByText('72%')).toBeInTheDocument();
+    expect(screen.getByText('0.72 / 1')).toBeInTheDocument();
+    expect(screen.queryByText('72%')).not.toBeInTheDocument();
     expect(screen.getByText('风格: 进取')).toBeInTheDocument();
     expect(screen.getByText('1600 - 1620')).toBeInTheDocument();
     expect(screen.getByText('业绩窗口')).toBeInTheDocument();
@@ -99,7 +100,7 @@ describe('DecisionSignalCard', () => {
     );
 
     expect(screen.getByText('评分')).toBeInTheDocument();
-    expect(screen.getByText('置信度')).toBeInTheDocument();
+    expect(screen.getByText('信心指标（未校准，非胜率）')).toBeInTheDocument();
     expect(screen.getByText('周期')).toBeInTheDocument();
     expect(screen.getAllByText('-').length).toBeGreaterThanOrEqual(3);
     expect(screen.queryByText('入场区间')).not.toBeInTheDocument();

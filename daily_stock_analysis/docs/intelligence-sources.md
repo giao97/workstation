@@ -4,6 +4,8 @@ Issue #1707 的首版能力聚焦“合规资讯源采集、本地沉淀、可�
 
 ## 能力范围
 
+资讯源现可供 [今日市场事件](market-events.md) 页面消费：按市场生成证据快照、条件式解读和人工核验记录。该入口不自动启用资讯源或新增定时推送；在本页原有全局自动采集开关之外，用户可显式刷新已启用源。
+
 - 支持配置 RSS / Atom HTTP(S) 资讯源。
 - 支持 NewsNow HTTP JSON 源，默认内置财联社热门、雪球热门股票、华尔街见闻快讯、金十数据和格隆汇事件等主流财经源。
 - 支持查询内置 RSS/Atom/NewsNow 模板，并可从模板创建可测试、可启停的资讯源；也可以一键创建全部内置默认源。
@@ -66,6 +68,7 @@ NEWSNOW_BASE_URL=https://newsnow.busiyi.world
 
 - `POST /sources`：创建资讯源。
 - `GET /sources`：查询资讯源。
+- `PATCH /sources/{source_id}`：仅切换 `enabled`，不修改来源 URL。
 - `GET /sources/templates?market=hk`：查询内置资讯源模板。
 - `POST /sources/templates/{template_id}`：从内置模板创建资讯源，可覆盖名称、启用状态、作用域和说明。
 - `POST /sources/defaults`：一键创建全部内置默认源；接口幂等，已存在的同名源会返回 `created=false`，不会重复插入。默认不传 `enabled` 时以 `false` 创建；如需默认启用可传 `{ "enabled": true }`。

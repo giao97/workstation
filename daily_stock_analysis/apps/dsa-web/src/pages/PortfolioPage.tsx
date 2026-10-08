@@ -8,7 +8,11 @@ import { getParsedApiError } from '../api/error';
 import { ApiErrorAlert, Card, Badge, ConfirmDialog, EmptyState, InlineAlert } from '../components/common';
 import { PortfolioSignalSummary } from '../components/decision-signals/DecisionSignalDisplay';
 import { AllocationPanel } from '../components/portfolio/AllocationPanel';
+import { TacticalResearchPanel } from '../components/portfolio/TacticalResearchPanel';
 import { AccountStatePanel } from '../components/portfolio/AccountStatePanel';
+import { BudgetPanel } from '../components/portfolio/BudgetPanel';
+import { PerformancePanel } from '../components/portfolio/PerformancePanel';
+import { EtfExposurePanel } from '../components/portfolio/EtfExposurePanel';
 import { useUiLanguage } from '../contexts/UiLanguageContext';
 import { formatUiText } from '../i18n/uiText';
 import { PORTFOLIO_TEXT } from '../locales/featureText';
@@ -132,6 +136,8 @@ function isNewerSignal(left: DecisionSignalItem | undefined, right: DecisionSign
 }
 
 function formatPortfolioLimitation(limitation: string, language: PortfolioPageLanguage): string {
+  if (limitation === 'trade_costs_unverified') return language === 'zh' ? '存在未核实费用，盈亏仅为暂估，不代表已核实净收益' : 'Unverified fees: P&L is provisional, not verified net profit';
+  if (limitation === 'execution_time_unknown') return language === 'zh' ? '部分成交时间未知，同日先后顺序待核实' : 'Some execution times are unknown; intraday sequence is unverified';
   return PORTFOLIO_LIMITATION_LABELS[limitation]?.[language] ?? limitation;
 }
 
@@ -249,6 +255,9 @@ const PortfolioPage: React.FC = () => {
   const [accountDeleteLoading, setAccountDeleteLoading] = useState(false);
 
   const [tradeForm, setTradeForm] = useState({
+    executedAt: '',
+    feeStatus: 'unknown' as 'unknown' | 'estimated' | 'confirmed',
+    intentId: '',
     symbol: '',
     tradeDate: getTodayIso(),
     side: 'buy' as PortfolioSide,
@@ -259,6 +268,7 @@ const PortfolioPage: React.FC = () => {
     tradeUid: '',
     note: '',
   });
+  const [tradeRequestKey, setTradeRequestKey] = useState(() => crypto.randomUUID());
   const [cashForm, setCashForm] = useState({
     eventDate: getTodayIso(),
     direction: 'in' as PortfolioCashDirection,
@@ -628,7 +638,12 @@ const PortfolioPage: React.FC = () => {
     }
     try {
       setWriteWarning(null);
+      if (tradeForm.feeStatus === 'confirmed' && (!tradeForm.fee.trim() || !tradeForm.tax.trim())) {
+        setWriteWarning(language === 'zh' ? '核实费用时请明确填写手续费和税费；确认为零也需填0。' : 'Enter both fees and taxes explicitly before confirming, including verified zeros.');
+        return;
+      }
       await portfolioApi.createTrade({
+        requestKey: tradeRequestKey,
         accountId: writableAccountId,
         symbol: tradeForm.symbol,
         tradeDate: tradeForm.tradeDate,
@@ -639,9 +654,13 @@ const PortfolioPage: React.FC = () => {
         tax: Number(tradeForm.tax || 0),
         tradeUid: tradeForm.tradeUid || undefined,
         note: tradeForm.note || undefined,
+        executedAt: tradeForm.executedAt || undefined,
+        feeStatus: tradeForm.feeStatus,
+        intentId: tradeForm.intentId ? Number(tradeForm.intentId) : undefined,
       });
       await refreshPortfolioData();
-      setTradeForm((prev) => ({ ...prev, symbol: '', tradeUid: '', note: '' }));
+      setTradeForm((prev) => ({ ...prev, symbol: '', tradeUid: '', note: '', executedAt: '', intentId: '', fee: '', tax: '', feeStatus: 'unknown' }));
+      setTradeRequestKey(crypto.randomUUID());
     } catch (err) {
       setError(getParsedApiError(err));
     }
@@ -1180,7 +1199,11 @@ const PortfolioPage: React.FC = () => {
       </section>
 
       <AccountStatePanel accounts={accounts} onSaved={refreshPortfolioData} />
+      <BudgetPanel accounts={accounts} onSaved={refreshPortfolioData} />
+      <PerformancePanel accounts={accounts} ledgerContext={snapshot} />
+      <EtfExposurePanel accounts={accounts} ledgerContext={snapshot} />
       <AllocationPanel accounts={accounts} snapshot={snapshot} costMethod={costMethod} />
+      <TacticalResearchPanel />
 
       <section className="grid grid-cols-1 xl:grid-cols-3 gap-3">
         <Card className="xl:col-span-2" padding="md">
@@ -1402,7 +1425,15 @@ const PortfolioPage: React.FC = () => {
               <input className={PORTFOLIO_INPUT_CLASS} type="number" min="0" step="0.0001" placeholder="税费（可选）" value={tradeForm.tax}
                 onChange={(e) => setTradeForm((prev) => ({ ...prev, tax: e.target.value }))} />
             </div>
-            <p className="text-xs text-secondary">手续费和税费可留空，系统将按 0 处理。</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <label className="text-xs">{language === 'zh' ? '费用证据' : 'Cost evidence'}<select className={PORTFOLIO_SELECT_CLASS} value={tradeForm.feeStatus} onChange={(e) => setTradeForm((p) => ({ ...p, feeStatus: e.target.value as 'unknown' | 'estimated' | 'confirmed' }))}>
+                <option value="unknown">{language === 'zh' ? '未知（不是零费用）' : 'Unknown (not zero)'}</option><option value="estimated">{language === 'zh' ? '估算' : 'Estimated'}</option><option value="confirmed">{language === 'zh' ? '结单已核实' : 'Statement confirmed'}</option>
+              </select></label>
+              <label className="text-xs">{language === 'zh' ? '成交时间（ISO，含时区，可留空）' : 'Execution time (ISO with offset, optional)'}<input className={PORTFOLIO_INPUT_CLASS} value={tradeForm.executedAt} onChange={(e) => setTradeForm((p) => ({ ...p, executedAt: e.target.value }))} /></label>
+              <label className="text-xs">{language === 'zh' ? '关联计划编号（可留空）' : 'Intent ID (optional)'}<input type="number" min="1" className={PORTFOLIO_INPUT_CLASS} value={tradeForm.intentId} onChange={(e) => setTradeForm((p) => ({ ...p, intentId: e.target.value }))} /></label>
+            </div>
+            <label className="text-xs">{language === 'zh' ? '券商成交编号（非委托编号，可留空）' : 'Broker execution ID (not order ID, optional)'}<input className={PORTFOLIO_INPUT_CLASS} value={tradeForm.tradeUid} onChange={(e) => setTradeForm((p) => ({ ...p, tradeUid: e.target.value }))} /></label>
+            <p className="text-xs text-secondary">{language === 'zh' ? '费用未知请留空并选择未知；账面数值仅供暂估，不代表零费用或已核实净收益。成交价不可填券商平均持仓成本。' : 'Keep unknown fees unverified. Ledger amounts are provisional, not zero-cost or verified net returns. Do not enter broker average cost as an execution price.'}</p>
             <button type="submit" className="btn-secondary w-full" disabled={!writableAccountId}>提交交易</button>
           </form>
         </Card>
@@ -1564,6 +1595,7 @@ const PortfolioPage: React.FC = () => {
                 <div key={`t-${item.id}`} className="flex items-start justify-between gap-3 border-b border-white/5 py-2 text-xs text-secondary">
                   <div className="min-w-0">
                     {item.tradeDate} {formatSideLabel(item.side)} {item.symbol} 数量={item.quantity} 价格={item.price}
+                    <div>{language === 'zh' ? '费用状态' : 'Cost status'}: {item.feeStatus ?? 'unknown'} · {item.executedAt ?? (language === 'zh' ? '准确成交时间未知' : 'Execution time unknown')}</div>
                   </div>
                   {!writeBlocked ? (
                     <button

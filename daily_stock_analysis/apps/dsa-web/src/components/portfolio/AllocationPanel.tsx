@@ -3,6 +3,8 @@ import { portfolioApi } from '../../api/portfolio';
 import { getParsedApiError } from '../../api/error';
 import { useUiLanguage } from '../../contexts/UiLanguageContext';
 import { Card, InlineAlert } from '../common';
+import { AllocationReviewPanel } from './AllocationReviewPanel';
+import { CoreEntryPanel } from './CoreEntryPanel';
 import type {
   AllocationPlan, AllocationPlanWrite, AllocationStatus, AllocationTarget,
   PortfolioAccountItem, PortfolioCostMethod, PortfolioSnapshotResponse,
@@ -27,6 +29,8 @@ const reasons: Record<string, [string, string]> = {
   cash_fx_unreliable: ['现金换算汇率不可靠', 'Cash conversion is unreliable'],
   cash_budget_unavailable: ['可用现金待核实', 'Verify available cash'],
   cash_budget_limited: ['已按扣除预留后的剩余现金限制', 'Limited by cash after reserves'],
+  period_budget_limited: ['已受本轮共享投入预算限制', 'Limited by shared period budget'],
+  period_budget_unverified: ['请核实本轮成交、费用和换算口径', 'Verify period fills, fees and conversion'],
   cash_reserve_only: ['预留现金，不生成买卖指令', 'Cash reserve; no trade action'],
   below_target: ['低于目标，等待交易条件确认', 'Below target; verify entry conditions'],
   below_min_band: ['低于配置下限，等待交易条件确认', 'Below lower band; verify entry conditions'],
@@ -219,6 +223,8 @@ export function AllocationPanel({ accounts, snapshot, costMethod }: {
             {!!target.referenceNotes?.length && <div className="text-xs text-secondary mt-1">{target.referenceNotes.map(reason).join('；')}</div>}</td>
         </tr>)}</tbody>
       </table></div>
+      <CoreEntryPanel status={status} />
+      <AllocationReviewPanel key={`${status.planId}:${status.planVersion}`} status={status} />
       <details className="rounded-xl border border-border p-3 text-sm">
         <summary className="cursor-pointer">{zh ? '分组查看（仅汇总，不新增预算）' : 'Group view (summary only, no extra budget)'}</summary>
         <div className="flex flex-wrap gap-3 my-3">{status.targets.map((target) => <label className="flex items-center gap-1" key={target.key}>

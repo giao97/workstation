@@ -77,8 +77,8 @@ function finiteNumber(value: number | null | undefined): number | null {
 
 function formatConfidence(value: number | null | undefined): string {
   const number = finiteNumber(value);
-  if (number === null) return '-';
-  return `${formatNumber(Math.abs(number) <= 1 ? number * 100 : number)}%`;
+  if (number === null || number < 0 || number > 1) return '-';
+  return `${formatNumber(number)} / 1`;
 }
 
 type TimelineShapeProps = {

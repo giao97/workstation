@@ -58,6 +58,7 @@ AGENT_GENERATION_BACKEND=auto
 - Phase 6a 的 DSA Tool Surface 仍是唯一工具 schema、权限元数据、scope guard、结构化错误和审计/脱敏边界；Phase 6 的 Codex AgentBackend 只能通过该 Tool Surface 执行工具。`codex_cli` / `claude_code_cli` / `opencode_cli` 仍是 generation-only，不能作为 Agent tool fallback。
 - Web 设置页的生成后端快速检查只读取已保存的 `.env`、运行时兜底值和未保存草稿；它不会写配置、重载运行时，也不会发起真实模型请求。`available` 只表示当前配置具备尝试运行的条件。JSON 冒烟测试是单独的显式操作，会使用服务端固定的 JSON 提示词和 schema 发起一次真实的生成后端请求，用于验证提取器、JSON 契约、超时、输出限制和 usage-unavailable 语义。
 - `GET /api/v1/system/config/generation-backends/status` 只读取已保存配置；未保存草稿需调用 `POST /api/v1/system/config/generation-backends/status/preview` 或 `POST /api/v1/system/config/generation-backends/smoke-test`。被遮罩的密钥字段会继续沿用已保存值。`health_status` 与 `last_error_code/message` 只代表本次计算结果，不是历史持久健康状态。
+- 冒烟请求的 `timeout_seconds` 支持 HTTP 数字规范化后的整数值（如 `90` / `90.0`），但仍只允许 1–3600 的整秒值；小数、非有限值和越界值会在模型调用前被拒绝。
 
 ### Codex 本地 Agent（Phase 6 实验原型）
 

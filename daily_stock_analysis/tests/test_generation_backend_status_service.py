@@ -2,6 +2,7 @@
 """Tests for generation backend status diagnostics."""
 
 import logging
+import pytest
 from unittest.mock import patch
 from types import SimpleNamespace
 
@@ -181,6 +182,37 @@ def test_litellm_smoke_timeout_reaches_final_completion_dispatch() -> None:
 
     assert payload["success"] is True
     assert captured["timeout"] == 1
+
+
+@pytest.mark.parametrize("timeout", [1, 90, 3600])
+def test_api_schema_float_timeout_reaches_smoke_backend(timeout) -> None:
+    from api.v1.schemas.system_config import TestGenerationBackendRequest
+
+    request = TestGenerationBackendRequest(backend_id="codex_cli", timeout_seconds=timeout)
+    assert isinstance(request.timeout_seconds, float)
+    _CapturingAnalyzer.configs = []
+    service = GenerationBackendStatusService(
+        effective_map={"GENERATION_BACKEND": "codex_cli", "GENERATION_FALLBACK_BACKEND": ""},
+        analyzer_factory=_CapturingAnalyzer,
+    )
+    with patch("src.llm.local_cli_backend.shutil.which", return_value="/usr/bin/codex"), \
+         patch("src.llm.local_cli_backend.os.access", return_value=True):
+        payload = service.smoke_test(timeout_seconds=request.timeout_seconds)
+    assert payload["success"] is True
+    assert _CapturingAnalyzer.configs[-1].generation_backend_timeout_seconds == timeout
+
+
+@pytest.mark.parametrize("timeout", [0.0, 3601.0, 1.5, float("nan"), float("inf"), True])
+def test_smoke_timeout_rejects_invalid_values_before_model_call(timeout) -> None:
+    _CapturingAnalyzer.configs = []
+    service = GenerationBackendStatusService(
+        effective_map={"GENERATION_BACKEND": "codex_cli", "GENERATION_FALLBACK_BACKEND": ""},
+        analyzer_factory=_CapturingAnalyzer,
+    )
+    payload = service.smoke_test(timeout_seconds=timeout)
+    assert payload["success"] is False
+    assert payload["status"]["last_error_code"] == "unsafe_config"
+    assert _CapturingAnalyzer.configs == []
 
 
 def test_litellm_smoke_redacts_provider_error_from_response_and_logs(caplog) -> None:

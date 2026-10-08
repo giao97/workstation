@@ -16,6 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from data_provider.base import canonical_stock_code, normalize_stock_code
 from data_provider.realtime_types import parse_quote_timestamp
 from src.config import get_config
+from src.core.portfolio_execution import execution_metadata, number, ordered_events
 from src.repositories.portfolio_repo import (
     DuplicateTradeDedupHashError,
     DuplicateTradeUidError,
@@ -210,14 +211,18 @@ class PortfolioService:
         trade_uid: Optional[str] = None,
         dedup_hash: Optional[str] = None,
         note: Optional[str] = None,
+        executed_at: Optional[datetime] = None,
+        fee_status: str = 'unknown',
+        price_basis: str = 'execution',
+        intent_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         side_norm = (side or "").strip().lower()
         if side_norm not in VALID_SIDES:
             raise ValueError("side must be buy or sell")
-        if quantity <= 0 or price <= 0:
-            raise ValueError("quantity and price must be > 0")
-        if fee < 0 or tax < 0:
-            raise ValueError("fee and tax must be >= 0")
+        for value, name in ((quantity, 'quantity'), (price, 'price'), (fee, 'fee'), (tax, 'tax')):
+            number(value, name, positive=name in {'quantity', 'price'})
+        if price_basis != 'execution':
+            raise ValueError('Use the actual execution price, not broker average/all-in cost')
         symbol_norm = self._normalize_symbol_for_storage(symbol)
         if not symbol_norm:
             raise ValueError("symbol is required")
@@ -228,12 +233,14 @@ class PortfolioService:
                 account = self._require_active_account_in_session(session=session, account_id=account_id)
                 market_norm = self._normalize_market(market or account.market)
                 currency_norm = self._normalize_currency(currency or self._default_currency_for_market(market_norm))
+                stamp = execution_metadata(executed_at=executed_at, trade_date=trade_date,
+                                           market=market_norm, fee_status=fee_status)
                 self._validate_trade_identity(
                     account_id=account_id,
                     trade_uid=trade_uid_norm,
                     dedup_hash=dedup_hash_norm,
                     session=session,
-                    )
+                )
                 if side_norm == "sell":
                     self._validate_sell_quantity(
                         account_id=account_id,
@@ -259,7 +266,18 @@ class PortfolioService:
                     tax=float(tax),
                     note=(note or "").strip() or None,
                     dedup_hash=dedup_hash_norm,
+                    executed_at=stamp,
+                    fee_status=fee_status,
+                    intent_id=intent_id,
                 )
+                # Validate chronological inventory after insertion, including later
+                # sells. A backdated buy must not retroactively finance an early sell.
+                self._calculate_available_quantity(account_id=account_id,
+                    key=(self._normalize_symbol_for_position(symbol_norm), market_norm, currency_norm),
+                    as_of_date=date.max, session=session)
+                if intent_id is not None:
+                    from src.services.portfolio_budget_service import PortfolioBudgetService
+                    PortfolioBudgetService(self.repo).validate_fill(session, row)
                 return {"id": int(row.id)}
         except (DuplicateTradeUidError, DuplicateTradeDedupHashError) as exc:
             raise PortfolioConflictError(str(exc)) from exc
@@ -610,6 +628,7 @@ class PortfolioService:
             "cost_method": method,
             "currency": aggregate_currency,
             "account_count": len(account_rows),
+            "net_pnl_verified": bool(accounts_payload) and all(a.get('net_pnl_verified') for a in accounts_payload),
             "total_cash": round(aggregate["total_cash"], 6),
             "total_market_value": round(aggregate["total_market_value"], 6),
             "total_equity": round(aggregate["total_equity"], 6),
@@ -747,7 +766,7 @@ class PortfolioService:
         # Cash ledger entries do not affect shares held, so we keep the same corp->trade
         # ordering as full replay without pulling unrelated cash events into this path.
         event_priority = {"corp": 1, "trade": 2}
-        events.sort(key=lambda item: (item[1], event_priority[item[0]], item[2]))
+        events = ordered_events(events, event_priority)
 
         opening = self.repo.get_opening_balance(account_id, session)
         quantity_held = 0.0
@@ -812,7 +831,7 @@ class PortfolioService:
 
         # Same-day deterministic ordering: cash -> corporate action -> trade.
         event_priority = {"cash": 0, "corp": 1, "trade": 2}
-        events.sort(key=lambda item: (item[1], event_priority[item[0]], item[2]))
+        events = ordered_events(events, event_priority)
 
         cash_balances: Dict[str, float] = defaultdict(float)
         fees_total_base = 0.0
@@ -995,6 +1014,8 @@ class PortfolioService:
             _portfolio_limitations_for_market(account.market),
             position_limitations,
             ["historical_realized_pnl_unavailable", "opening_fifo_lots_aggregated"] if opening else [],
+            ['trade_costs_unverified'] if any(t.fee_status != 'confirmed' for t in trades) else [],
+            ['execution_time_unknown'] if any(t.executed_at is None for t in trades) else [],
         )
 
         from src.services.portfolio_account_state_service import PortfolioAccountStateService
@@ -1021,6 +1042,7 @@ class PortfolioService:
             "total_market_value": round(market_value_base, 6),
             "total_equity": round(total_equity_base, 6),
             "realized_pnl": round(realized_pnl_base, 6),
+            "net_pnl_verified": not any(t.fee_status != 'confirmed' for t in trades) and not fx_stale and not opening,
             "unrealized_pnl": round(unrealized_pnl_base, 6),
             "fee_total": round(fees_total_base, 6),
             "tax_total": round(taxes_total_base, 6),
@@ -1765,6 +1787,11 @@ class PortfolioService:
             "price": float(row.price),
             "fee": float(row.fee),
             "tax": float(row.tax),
+            "executed_at": row.executed_at.isoformat() + 'Z' if row.executed_at else None,
+            "fee_status": row.fee_status,
+            "price_basis": 'execution',
+            "revision": row.revision,
+            "intent_id": row.intent_id,
             "note": row.note,
             "created_at": row.created_at.isoformat() if row.created_at else None,
         }

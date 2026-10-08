@@ -2,9 +2,13 @@ import apiClient from './index';
 import { toCamelCase } from './utils';
 import type { TaskAccepted } from '../types/analysis';
 import type {
+  ProfilePreview,
+  BudgetPeriod, PortfolioTradeListItem,
+  PerformanceReview, PerformanceReviewRequest,
   AllocationPlan,
   AllocationPlanWrite,
   AllocationStatus,
+  AllocationReviewWrite, AllocationReview, AllocationReviewList,
   OpeningBalanceWrite, OpeningPreview, FundingWrite, AccountState,
   PortfolioAccountItem,
   PortfolioAccountCreateRequest,
@@ -110,8 +114,42 @@ function buildEventParams(query: EventQuery): Record<string, string | number> {
 }
 
 export const portfolioApi = {
+  async reviewPerformance(accountId: number, value: PerformanceReviewRequest): Promise<PerformanceReview> {
+    return toCamelCase((await apiClient.post(`/api/v1/portfolio/accounts/${accountId}/performance-review`, {
+      start_date: value.startDate, end_date: value.endDate, symbols: value.symbols,
+      ledger_confirmed: value.ledgerConfirmed, include_realtime: value.includeRealtime,
+    })).data);
+  },
+  async listBudgets(accountId: number): Promise<{ items: BudgetPeriod[] }> {
+    return toCamelCase((await apiClient.get(`/api/v1/portfolio/accounts/${accountId}/budgets`)).data);
+  },
+  async createBudget(accountId: number, body: Record<string, unknown>): Promise<PortfolioEventCreatedResponse> {
+    return (await apiClient.post(`/api/v1/portfolio/accounts/${accountId}/budgets`, body)).data;
+  },
+  async confirmBudget(id: number, confirmed: boolean): Promise<void> {
+    await apiClient.post(`/api/v1/portfolio/budgets/${id}/ledger-confirmation`, { confirmed });
+  },
+  async adjustBudgetTrade(id: number, tradeId: number, body: Record<string, unknown>): Promise<void> {
+    await apiClient.put(`/api/v1/portfolio/budgets/${id}/trades/${tradeId}`, body);
+  },
+  async createIntent(id: number, body: Record<string, unknown>): Promise<PortfolioEventCreatedResponse> {
+    return (await apiClient.post(`/api/v1/portfolio/budgets/${id}/intents`, body)).data;
+  },
+  async reportIntent(id: number, body: Record<string, unknown>): Promise<void> {
+    await apiClient.patch(`/api/v1/portfolio/intents/${id}`, body);
+  },
+  async linkExistingFill(intentId: number, tradeId: number): Promise<void> {
+    await apiClient.post(`/api/v1/portfolio/intents/${intentId}/fills/${tradeId}`);
+  },
+  async reconcileTrade(id: number, body: Record<string, unknown>): Promise<PortfolioTradeListItem> {
+    return toCamelCase((await apiClient.put(`/api/v1/portfolio/trades/${id}/reconciliation`, body)).data);
+  },
   async getAccountState(accountId: number): Promise<AccountState> {
     return toCamelCase((await apiClient.get(`/api/v1/portfolio/accounts/${accountId}/state`)).data);
+  },
+
+  async previewProfile(document: string): Promise<ProfilePreview> {
+    return toCamelCase((await apiClient.post('/api/v1/portfolio/imports/profile/preview', { document })).data);
   },
 
   async previewOpeningBalance(accountId: number, value: OpeningBalanceWrite): Promise<OpeningPreview> {
@@ -164,6 +202,23 @@ export const portfolioApi = {
   async getAllocationStatus(id: number, query: SnapshotQuery = {}): Promise<AllocationStatus> {
     const response = await apiClient.get(`/api/v1/portfolio/allocation-plans/${id}/status`, {
       params: buildSnapshotParams(query),
+    });
+    return toCamelCase(response.data);
+  },
+
+  async getAllocationReviews(id: number, targetKey: string, beforeId?: number): Promise<AllocationReviewList> {
+    const response = await apiClient.get(`/api/v1/portfolio/allocation-plans/${id}/reviews`, {
+      params: { target_key: targetKey, before_id: beforeId },
+    });
+    return toCamelCase(response.data);
+  },
+
+  async saveAllocationReview(id: number, value: AllocationReviewWrite): Promise<AllocationReview> {
+    const response = await apiClient.post(`/api/v1/portfolio/allocation-plans/${id}/reviews`, {
+      request_key: value.requestKey, expected_plan_version: value.expectedPlanVersion,
+      expected_previous_id: value.expectedPreviousId, target_key: value.targetKey,
+      horizon: value.horizon, decision: value.decision, reason: value.reason, evidence: value.evidence,
+      next_condition: value.nextCondition, review_due_at: value.reviewDueAt,
     });
     return toCamelCase(response.data);
   },
@@ -233,6 +288,11 @@ export const portfolioApi = {
       quantity: payload.quantity,
       price: payload.price,
       fee: payload.fee ?? 0,
+      fee_status: payload.feeStatus ?? 'unknown',
+      executed_at: payload.executedAt || null,
+      price_basis: payload.priceBasis ?? 'execution',
+      intent_id: payload.intentId ?? null,
+      request_key: payload.requestKey,
       tax: payload.tax ?? 0,
       market: payload.market,
       currency: payload.currency,

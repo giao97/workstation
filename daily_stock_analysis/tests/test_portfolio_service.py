@@ -542,6 +542,8 @@ class PortfolioServiceTestCase(unittest.TestCase):
                         "realtime_quote_best_effort",
                         "fx_and_cost_basis_partial",
                         "sector_and_risk_metrics_limited",
+                        "trade_costs_unverified",
+                        "execution_time_unknown",
                     ],
                 )
                 self.assertEqual(position["symbol"], symbol)
@@ -572,6 +574,8 @@ class PortfolioServiceTestCase(unittest.TestCase):
         self.assertEqual(
             snapshot["limitations"],
             [
+                "trade_costs_unverified",
+                "execution_time_unknown",
                 "realtime_quote_best_effort",
                 "fx_and_cost_basis_partial",
                 "sector_and_risk_metrics_limited",

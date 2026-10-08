@@ -251,6 +251,9 @@ class PortfolioImportService:
                     trade_uid=trade_uid,
                     dedup_hash=dedup_hash_to_use,
                     note=(record.get("note") or "").strip() or f"csv_import:{broker_norm}",
+                    fee_status=record.get('fee_status', 'unknown'),
+                    executed_at=record.get('executed_at'),
+                    price_basis=record.get('price_basis', 'execution'),
                 )
                 inserted_count += 1
             except PortfolioConflictError:
@@ -381,6 +384,8 @@ class PortfolioImportService:
             "price": float(price),
             "fee": float(fee),
             "tax": float(tax),
+            # Generic columns may overlap or omit charges; require statement confirmation.
+            "fee_status": 'estimated' if fee or tax else 'unknown',
             "trade_uid": (str(trade_uid).strip() if trade_uid is not None else None) or None,
             "currency": (str(currency).strip().upper() if currency is not None else None) or None,
         }

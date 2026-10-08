@@ -5,6 +5,63 @@ export type PortfolioSide = 'buy' | 'sell';
 export type PortfolioCashDirection = 'in' | 'out';
 export type PortfolioCorporateActionType = 'cash_dividend' | 'split_adjustment';
 
+export interface PerformanceReviewRequest {
+  startDate: string;
+  endDate: string;
+  symbols: string[];
+  ledgerConfirmed: boolean;
+  includeRealtime: boolean;
+}
+
+export interface TradingContribution {
+  symbol: string;
+  market: string;
+  currency: string;
+  status: 'restored' | 'under_baseline' | 'over_baseline' | 'no_activity' | 'unsupported';
+  baselineQuantity: number;
+  endingQuantity: number;
+  baselineKind: 'unchanged_shares' | 'unchanged_cash';
+  shareGap: number | null;
+  unrecoveredQuantity: number | null;
+  extraQuantity: number | null;
+  buyNotional: number;
+  sellNotional: number;
+  grossCashFlow: number;
+  recordedCosts: number;
+  costsConfirmed: boolean;
+  netCashFlow: number | null;
+  closedNetPnl: number | null;
+  relativeHoldPnl: number | null;
+  markDifference: number | null;
+  economicCostImprovementPerShare: number | null;
+  comparisonKind: 'unavailable' | 'marked_estimate' | 'cash_difference';
+  unverifiedFeeTradeIds: number[];
+  tradeCount: number;
+  limitations: string[];
+  trades: PortfolioTradeListItem[];
+  corporateActions: Array<Record<string, unknown>>;
+  valuation: { price: number | null; source: string | null; provider: string | null;
+    timestamp: string | null; fetchedAt: string | null; usable: boolean; reason: string } | null;
+}
+
+export interface PerformanceReview {
+  accountId: number;
+  startDate: string;
+  endDate: string;
+  timezone: string;
+  requestedSymbols: string[];
+  ledgerConfirmed: boolean;
+  methodologyVersion: string;
+  ledgerFingerprint: string;
+  evidenceHash: string;
+  generatedAt: string;
+  items: TradingContribution[];
+  totalsByCurrency: Array<{ currency: string; itemCount: number; comparableCount: number;
+    closedVerifiedCount: number; verifiedClosedNetPnl: number | null; relativeHoldPnl: number | null;
+    containsMarkedEstimate: boolean }>;
+  disclosures: string[];
+}
+
 export interface AllocationTarget {
   key: string;
   name: string;
@@ -40,6 +97,7 @@ export interface AllocationPlan extends AllocationPlanWrite {
 }
 
 export interface AllocationTargetStatus extends Omit<AllocationTarget, 'currentAmount'> {
+  coreEntries?: CoreEntryAssessment[];
   currentAmount: number | null;
   currentPct: number | null;
   targetAmount: number;
@@ -53,6 +111,22 @@ export interface AllocationTargetStatus extends Omit<AllocationTarget, 'currentA
   reason: string;
   dataComplete: boolean;
   limitations: string[];
+}
+
+export interface CoreEntryAssessment {
+  symbol: string;
+  method: string;
+  state: 'candidate' | 'wait' | 'risk_review' | 'data_required';
+  asOf: string | null;
+  evaluatedAt: string;
+  sources: string[];
+  metrics: Record<string, number>;
+  reasons: string[];
+  checks: string[];
+  limitations: string[];
+  executable: false;
+  allocationReady: boolean;
+  allocationAction: string;
 }
 
 export interface AllocationStatus {
@@ -76,6 +150,23 @@ export interface AllocationStatus {
   unassignedPositions: Array<{ symbol: string; currentAmount: number; priceAvailable: boolean }>;
 }
 
+export interface AllocationReviewWrite {
+  requestKey: string; expectedPlanVersion: number; expectedPreviousId: number | null;
+  targetKey: string; horizon: 'long_term' | 'tactical';
+  decision: 'maintain_plan' | 'wait' | 'data_required' | 'pause';
+  reason: string; evidence: string; nextCondition: string; reviewDueAt: string;
+}
+
+export interface AllocationReview extends AllocationReviewWrite {
+  id: number; planId: number; revision: number; createdAt: string;
+  targetSnapshot: AllocationTarget; authority: 'manual_unverified';
+  state: 'active' | 'due' | 'plan_changed' | 'plan_inactive';
+}
+
+export interface AllocationReviewList {
+  planVersion: number; latest: AllocationReview[]; items: AllocationReview[]; nextBeforeId: number | null;
+}
+
 export interface PortfolioAccountItem {
   id: number;
   ownerId?: string | null;
@@ -86,6 +177,12 @@ export interface PortfolioAccountItem {
   isActive: boolean;
   createdAt?: string | null;
   updatedAt?: string | null;
+}
+
+export interface ProfilePreview {
+  profileDate: string; market: 'us'; currency: 'USD'; status: 'reference' | 'stale';
+  sourceHash: string; canCommit: false; cashBalance: null; openingDate: null;
+  positions: Array<{ symbol: string; quantity: number | null; quantityText: string; costText: string; costStatus: 'requires_confirmation' }>;
 }
 
 export interface OpeningPosition {
@@ -298,6 +395,11 @@ export interface PortfolioRiskResponse {
 }
 
 export interface PortfolioTradeCreateRequest {
+  requestKey?: string;
+  executedAt?: string;
+  feeStatus?: 'unknown' | 'estimated' | 'confirmed';
+  priceBasis?: 'execution';
+  intentId?: number;
   accountId: number;
   symbol: string;
   tradeDate: string;
@@ -342,6 +444,10 @@ export interface PortfolioDeleteResponse {
 }
 
 export interface PortfolioTradeListItem {
+  executedAt?: string | null;
+  feeStatus?: 'unknown' | 'estimated' | 'confirmed';
+  revision?: number;
+  intentId?: number | null;
   id: number;
   accountId: number;
   tradeUid?: string | null;
@@ -356,6 +462,18 @@ export interface PortfolioTradeListItem {
   tax: number;
   note?: string | null;
   createdAt?: string | null;
+}
+
+export interface BudgetPeriod {
+  id: number; name: string; accountId: number; currency: string; timezone: string;
+  startDate: string; endDate: string; symbols: string[]; amount: number;
+  ledgerComplete: boolean; activePeriod: boolean; confirmedSpent: number;
+  reservedAmount: number; nativeReserved: number; remainingAmount: number | null;
+  overBudgetAmount: number; unresolvedTradeIds: number[];
+  trades: Array<{ tradeId: number; symbol: string; excluded: boolean; feeStatus: string;
+    fxRate: number | null; amount: number | null }>;
+  intents: Array<{ id: number; symbol: string; status: string; reportedStatus: string; revision: number;
+    quantity: number; filledQuantity: number; remainingQuantity: number; reservedAmount: number; expiresAt: string }>;
 }
 
 export interface PortfolioTradeListResponse {

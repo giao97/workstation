@@ -24,6 +24,7 @@ import {
 } from '../components/decision-signals/DecisionSignalDisplay';
 import { DecisionSignalProfileCalibration } from '../components/decision-signals/DecisionSignalProfileCalibration';
 import { DecisionSignalTimeline } from '../components/decision-signals/DecisionSignalTimeline';
+import { PaperObservationPanel } from '../components/decision-signals/PaperObservationPanel';
 import { StockAutocomplete } from '../components/StockAutocomplete';
 import { useUiLanguage } from '../contexts/UiLanguageContext';
 import { useStockIndex } from '../hooks/useStockIndex';
@@ -1091,7 +1092,7 @@ const DecisionSignalsPage: React.FC = () => {
               </div>
               <div className="rounded-lg border border-border/50 bg-background/40 p-3">
                 <p className="text-xs text-secondary-text">{t('decisionSignals.confidence')}</p>
-                <p className="mt-1 text-sm font-semibold text-foreground">{preview.confidence ?? '-'}</p>
+                <p className="mt-1 text-sm font-semibold text-foreground">{preview.confidence == null ? '-' : `${preview.confidence} / 1`}</p>
               </div>
               <div className="rounded-lg border border-border/50 bg-background/40 p-3">
                 <p className="text-xs text-secondary-text">{t('decisionSignals.horizon')}</p>
@@ -1592,6 +1593,7 @@ const DecisionSignalsPage: React.FC = () => {
                 </button>
               ))}
             />
+            <PaperObservationPanel key={selected.item.id} signalId={selected.item.id} market={selected.item.market} />
           </div>
         ) : null}
       </Drawer>

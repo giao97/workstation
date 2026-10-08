@@ -193,7 +193,7 @@ def _build_persist_payload(
         "reason": candidate.reason,
         "risk_summary": candidate.risk_summary,
         "watch_conditions": candidate.watch_conditions,
-        "metadata": metadata,
+        "metadata": {**metadata, "confidence_semantics": "uncalibrated_ordinal_not_probability"},
         "report_language": raw_result.get("report_language"),
     }
 

@@ -133,6 +133,12 @@ class PortfolioAllocationService:
             cost_method=cost_method,
             include_realtime=include_realtime,
         )
+        from src.repositories.portfolio_repo import PortfolioRepository
+        from src.services.portfolio_budget_service import PortfolioBudgetService
+        budgets = PortfolioBudgetService(PortfolioRepository(self.repo.db))
+        for account in snapshot.get('accounts') or []:
+            account['budget_periods'] = budgets.list_status(account['account_id'], require_account=False)
+            account['budget_history_unavailable'] = bool(account['budget_periods']) and as_of_date != date.today()
         normalized_snapshot = self._normalize_snapshot(
             snapshot=snapshot,
             plan_currency=plan["base_currency"],
@@ -142,6 +148,18 @@ class PortfolioAllocationService:
         result["account_id"] = account_id
         result["cost_method"] = cost_method
         result["include_realtime"] = bool(include_realtime)
+        # Current research annotations only, independent of cash/gap computation.
+        # Historical evaluations must not leak reviews created after their as_of.
+        from src.services.allocation_review_service import AllocationReviewService
+        from src.repositories.allocation_review_repo import AllocationReviewRepository
+        if as_of is None or as_of == date.today():
+            from src.services.core_entry_service import CoreEntryService
+            CoreEntryService(self.repo).annotate(result, snapshot)
+            reviews = AllocationReviewService(AllocationReviewRepository(self.repo.db)).latest(plan_id)
+            for target in result["targets"]:
+                target["research_reviews"] = [dict(item, state="plan_changed")
+                    if item["expected_plan_version"] != result["plan_version"] else item
+                    for item in reviews if item["target_key"] == target["key"]]
         return result
 
     def _normalize_snapshot(
@@ -159,6 +177,8 @@ class PortfolioAllocationService:
         confirmed_pools: Dict[str, float] = {}
         funding_accounts = []
         funding_complete = True
+        reserved_cash_value = 0.0
+        budget_pools = []
 
         def convert(amount, currency):
             converter = getattr(self.portfolio_service, "convert_amount_for_allocation", None)
@@ -176,6 +196,26 @@ class PortfolioAllocationService:
             funding = account.get("funding") or {}
             observed = funding.get("funding") or {}
             cash_cap = funding.get("confirmed_cash_cap")
+            budget_periods = account.get('budget_periods') or []
+            native_reserved = sum(b['native_reserved'] for b in budget_periods)
+            converted_reserved, reliable_reserved, _ = convert(native_reserved, account_currency)
+            reserved_cash_value += converted_reserved
+            if not reliable_reserved or account.get('budget_history_unavailable'):
+                cash_reliable = False
+                limitations.append('budget_reservation_unverified')
+            for budget in budget_periods:
+                # No automatic monthly renewal. A previous/future configured
+                # budget keeps covered symbols blocked until a current period exists.
+                covered_now = {s for b in budget_periods if b['active_period'] for s in b['symbols']}
+                symbols = budget['symbols'] if budget['active_period'] else [s for s in budget['symbols'] if s not in covered_now]
+                if not symbols:
+                    continue
+                cap = budget['remaining_amount']
+                if not budget['active_period']:
+                    cap = 0.0
+                converted_budget, reliable_budget, _ = convert(cap or 0, budget['currency'])
+                budget_pools.append({'id': budget['id'], 'market': account.get('market'),
+                    'symbols': symbols, 'remaining': converted_budget if cap is not None and reliable_budget else None})
             funding_accounts.append({"account_id": account.get("account_id"), "currency": account_currency,
                                      "cash_confirmed": bool(funding.get("cash_confirmed")),
                                      "confirmed_cash_cap": cash_cap,
@@ -184,7 +224,8 @@ class PortfolioAllocationService:
             if cash_cap is None or not funding.get("cash_confirmed") or not isinstance(native_cash, dict):
                 funding_complete = False
             else:
-                cap = min(max(0.0, float(native_cash.get(account_currency, 0))), max(0.0, float(cash_cap)))
+                cap = max(0.0, min(max(0.0, float(native_cash.get(account_currency, 0))),
+                                  max(0.0, float(cash_cap))) - native_reserved)
                 converted_cap, reliable_cap, _ = convert(cap, account_currency)
                 market = account.get("market")
                 native_currency = {"cn": "CNY", "us": "USD", "hk": "HKD", "jp": "JPY", "kr": "KRW", "tw": "TWD"}.get(market)
@@ -235,6 +276,8 @@ class PortfolioAllocationService:
             "as_of": snapshot.get("as_of") or as_of_date.isoformat(),
             "account_count": int(snapshot.get("account_count") or 0),
             "cash_value": cash_value,
+            "reserved_cash_value": reserved_cash_value,
+            "budget_pools": budget_pools,
             "cash_reliable": cash_reliable,
             "cash_reference_notes": sorted(set(cash_reference_notes)),
             "funding_complete": funding_complete,

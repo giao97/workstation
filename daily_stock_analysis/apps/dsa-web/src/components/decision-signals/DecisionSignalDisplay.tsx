@@ -85,9 +85,8 @@ function formatPercent(value: number | null | undefined): string {
 }
 
 function formatConfidence(value: number | null | undefined): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return '-';
-  const normalized = Math.abs(value) <= 1 ? value * 100 : value;
-  return `${formatNumber(normalized)}%`;
+  if (value == null || !Number.isFinite(value) || value < 0 || value > 1) return '-';
+  return `${formatNumber(value)} / 1`;
 }
 
 function formatEntryRange(item: DecisionSignalItem): string {

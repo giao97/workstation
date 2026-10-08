@@ -4419,6 +4419,32 @@ Index text.
         assert "URL: https://example.com/redirect?" in prompt
         assert ("x" * 220) not in prompt
 
+    def test_cn_sector_search_continues_after_failure_and_includes_battery(self):
+        ma = self._make_market_analyzer_with_mock_generate_text(return_value="review")
+        ma.search_service = MagicMock()
+        calls = []
+
+        def search(**kwargs):
+            calls.append(kwargs['focus_keywords'])
+            if len(calls) == 1:
+                raise TimeoutError('fixture')
+            return SimpleNamespace(results=[])
+
+        ma.search_service.search_stock_news.side_effect = search
+        ma.search_market_news()
+        assert len(calls) == len(ma.profile.news_queries) + 5
+        assert any('固态电池' in query for query in calls)
+        assert any('涨停梯队' in query for query in calls)
+
+    def test_review_prompt_keeps_late_battery_lead_after_macro_headlines(self):
+        from src.market_analyzer import MarketOverview
+        ma = self._make_market_analyzer_with_mock_generate_text(return_value="review")
+        news = [{'title': f'央行政策{i}', 'snippet': '利率观察'} for i in range(15)]
+        news.append({'title': '固态电池合成测试独立线索', 'snippet': '新订单'})
+        prompt = ma._build_review_prompt(MarketOverview(date='2026-10-08'), news)
+        assert '固态电池合成测试独立线索' in prompt
+        assert '没有历史快照不能宣称提前发现' in prompt
+
     def test_market_light_snapshot_marks_defensive_market_red(self):
         from src.market_analyzer import MarketIndex, MarketOverview
 

@@ -2,6 +2,14 @@
 
 本文档定义基本面研究第一阶段的内部数据契约。目标是让财务事实、派生指标和研究截止时间可追溯、可复算，并在不破坏现有报告的前提下逐步升级数据源。
 
+## Standard 报告 1.1：覆盖率不是置信度
+
+`standard_report` 使用 `coverage_pct = 非 missing 章节数 / 总章节数 × 100`（当前固定 13 章，含 limited）。它只说明章节有无内容，不衡量数据可靠性、预测置信度或交易胜率。即使只有“数据边界”章节可用，也会产生非零覆盖率，但不改变 `research_stance=insufficient`。
+
+旧 `confidence_pct` 保留键名但在 1.1 输出中为 `null`，不以 0 假装有校准结果。内部 Standard 消费方已检查，无 Web/桌面数值渲染依赖；外部消费者必须按 `contract_version` 切换字段并允许 null，不能继续拿此字段算胜率或仓位。
+
+读取 1.0 对象时只在内存把旧值映射到 `coverage_pct` 并添加口径说明，不改写历史归档。1.1 显式输入非空 `confidence_pct` 会被拒绝；没有样本外校准与适用范围证据前，不恢复数字置信度。回滚到旧代码会恢复旧标签，因此不得将旧版输出解释成真实置信度。
+
 ## 当前范围
 
 - `fundamental_context` 原有的估值、增长、盈利和覆盖字段保持不变。
@@ -111,3 +119,13 @@ research.data.warnings
 - 版本化持久化：`src/storage.py`
 - 回归测试：`tests/test_fundamental_research_contract.py`
 - 跨市场与整体验收测试：`tests/test_cross_market_financial_research.py`
+
+## 来源转换与离线验收（2026-10）
+
+兼容层现在保留 source_chain 中显式提供的 source_url、published_at、effective_at、retrieved_at、report_period、filing_version、content_hash 和 raw_snapshot_ref。按完整来源身份去重，不再把同一提供方的不同公告或修订合为一条；证据 ID 不依赖列表顺序。已提供但格式非法的时间会报错，不截断为日期；显式发布时间或无发布时间时的抓取时间超过 as_of，仍由既有 EvidenceSnapshot 拒绝。
+
+旧提供方不返回抓取时间时保留兼容回退，但 metadata.retrieval_time_inferred_from_cutoff 为 true，并输出 provider_retrieval_time_not_available；这不是实际抓取时间证明。任何期间缺少发布时间均输出财报时间缺失告警，不只检查最近一期。快照仍为 limited：字段齐全并不代表版本快照已验证。财报内容、电话会和公告前一致预期不会因为此改动自动补齐，既有财务期间与证据 ID 的逐条对应仍需上游提供更精确来源。
+
+使用合成资料运行 `python -m pytest tests/test_research_evidence_provenance.py tests/test_fundamental_research_contract.py tests/test_standard_report_coverage.py tests/test_report_integrity.py`。其中 12 个来源验收案例覆盖跨市场、来源保留、同提供方多文档／修订、输入顺序、未来材料、非法时间、旧输入缺时点、非自然财年与历史期间。它们不调用模型，不评估股票收益，也不证明真实数据源已提供上述元数据。
+
+回滚时仅撤回本次 fundamental_research_service.py、test_research_evidence_provenance.py 与本段文档／变更记录的差异；不回滚同目录的其他工作。证据 ID 的新算法只影响新生成记录，历史归档不重写；外部消费者不应跨版本假定 ID 与旧算法完全相同。

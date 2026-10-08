@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 SourceTypeValue = Literal["rss", "atom", "newsnow"]
 ScopeTypeValue = Literal["symbol", "market", "sector"]
@@ -34,6 +34,11 @@ class IntelligenceSourceTemplateCreateRequest(BaseModel):
 
 class IntelligenceDefaultSourcesCreateRequest(BaseModel):
     enabled: Optional[bool] = None
+
+
+class IntelligenceSourceEnabledRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    enabled: bool
 
 
 class IntelligenceSourceItem(BaseModel):

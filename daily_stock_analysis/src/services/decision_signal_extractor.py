@@ -98,6 +98,7 @@ def build_decision_signal_payload_from_report(
         "report_type": report_type,
         "decision_type": getattr(result, "decision_type", None),
         "report_confidence_level": getattr(result, "confidence_level", None),
+        "confidence_semantics": "uncalibrated_ordinal_not_probability",
         "report_language": getattr(result, "report_language", None),
         "decision_profile": "balanced",
         "profile_source": profile_source,

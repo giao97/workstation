@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import hashlib
 from datetime import date
 from typing import Optional
 
@@ -14,6 +15,7 @@ from api.v1.errors import api_error
 from api.v1.schemas.analysis import DuplicateTaskErrorResponse, TaskAccepted
 from api.v1.schemas.common import ErrorResponse
 from api.v1.schemas.portfolio import (
+    PortfolioProfilePreviewRequest,
     PortfolioAccountCreateRequest,
     PortfolioAccountItem,
     PortfolioAccountListResponse,
@@ -44,9 +46,21 @@ from api.v1.schemas.portfolio import (
     PortfolioOpeningCommitResponse,
     PortfolioFundingRequest,
     PortfolioAccountStateResponse,
+    PortfolioTradeListItem, PortfolioTradeReconcileRequest, PortfolioBudgetRequest,
+    PortfolioBudgetConfirmation, PortfolioBudgetAdjustment, PortfolioIntentRequest, PortfolioIntentStateRequest,
+    PortfolioPerformanceRequest,
 )
+from src.services.portfolio_performance_service import PortfolioPerformanceService
+from src.schemas.tactical_research import TacticalPreviewRequest
+from src.core.tactical_research import preview_tactical
+from src.schemas.etf_exposure import EtfCompositionInput, EtfCompositionCommit
+from src.services.etf_exposure_service import EtfExposureService
+from src.services.portfolio_budget_service import PortfolioBudgetService
 from src.services.portfolio_account_state_service import PortfolioAccountStateService
 from src.services.portfolio_allocation_service import PortfolioAllocationService
+from src.services.allocation_review_service import AllocationReviewService
+from src.repositories.allocation_review_repo import AllocationReviewConflict
+from src.schemas.allocation_review import AllocationReviewWrite, AllocationReviewItem, AllocationReviewList
 from src.services.task_queue import get_task_queue
 from src.services.portfolio_import_service import PortfolioImportService
 from src.services.portfolio_risk_service import PortfolioRiskService
@@ -60,6 +74,93 @@ from src.services.portfolio_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@router.post('/tactical-research/preview')
+def preview_tactical_research(request: TacticalPreviewRequest):
+    """Stateless what-if batch: never creates orders, positions or cash reservations."""
+    return preview_tactical(request)
+
+
+@router.post('/etf-compositions/preview')
+def preview_etf_composition(request: EtfCompositionInput):
+    return _account_state_call(EtfExposureService().preview, request)
+
+
+@router.post('/etf-compositions')
+def save_etf_composition(request: EtfCompositionCommit):
+    return _account_state_call(EtfExposureService().save, request)
+
+
+@router.get('/etf-compositions/{snapshot_id}')
+def get_etf_composition(snapshot_id: int):
+    result = EtfExposureService().repo.get(snapshot_id)
+    if result is None:
+        raise HTTPException(404, detail='ETF composition snapshot not found')
+    return result
+
+
+@router.get('/etf-exposure')
+def get_etf_exposure(account_id: Optional[int] = Query(None, ge=1)):
+    return _account_state_call(EtfExposureService().report, account_id)
+
+
+@router.post('/imports/profile/preview')
+def preview_investment_profile(request: PortfolioProfilePreviewRequest):
+    """Explicit uploaded text only; never read a server path or create ledger entries."""
+    from src.services.portfolio_profile_preview import preview_profile
+    return _account_state_call(preview_profile, request.document)
+
+
+@router.post('/accounts/{account_id}/performance-review')
+def review_trading_performance(account_id: int, request: PortfolioPerformanceRequest):
+    """Read-only evaluation; POST carries explicit review scope, not an order."""
+    return _account_state_call(PortfolioPerformanceService().evaluate, account_id, **request.model_dump())
+
+
+@router.post('/accounts/{account_id}/budgets', response_model=PortfolioEventCreatedResponse)
+def create_budget(account_id: int, request: PortfolioBudgetRequest):
+    return _account_state_call(PortfolioBudgetService().create_budget, account_id, request.model_dump(mode='json'))
+
+
+@router.get('/accounts/{account_id}/budgets')
+def list_budgets(account_id: int):
+    return {'items': _account_state_call(PortfolioBudgetService().list_status, account_id)}
+
+
+@router.post('/budgets/{budget_id}/ledger-confirmation', response_model=PortfolioEventCreatedResponse)
+def confirm_budget(budget_id: int, request: PortfolioBudgetConfirmation):
+    return _account_state_call(PortfolioBudgetService().confirm_ledger, budget_id, request.confirmed)
+
+
+@router.put('/budgets/{budget_id}/trades/{trade_id}', response_model=PortfolioEventCreatedResponse)
+def adjust_budget_trade(budget_id: int, trade_id: int, request: PortfolioBudgetAdjustment):
+    return _account_state_call(PortfolioBudgetService().adjust_trade, budget_id, trade_id, request.model_dump())
+
+
+@router.post('/budgets/{budget_id}/intents', response_model=PortfolioEventCreatedResponse)
+def create_purchase_intent(budget_id: int, request: PortfolioIntentRequest):
+    return _account_state_call(PortfolioBudgetService().create_intent, budget_id, request.model_dump(mode='json'))
+
+
+@router.patch('/intents/{intent_id}', response_model=PortfolioEventCreatedResponse)
+def report_intent_state(intent_id: int, request: PortfolioIntentStateRequest):
+    return _account_state_call(PortfolioBudgetService().set_intent_state, intent_id, request.model_dump())
+
+
+@router.post('/intents/{intent_id}/fills/{trade_id}', response_model=PortfolioEventCreatedResponse)
+def link_existing_fill(intent_id: int, trade_id: int):
+    return _account_state_call(PortfolioBudgetService().link_existing_fill, intent_id, trade_id)
+
+
+@router.put('/trades/{trade_id}/reconciliation', response_model=PortfolioTradeListItem)
+def reconcile_trade(trade_id: int, request: PortfolioTradeReconcileRequest):
+    return _account_state_call(PortfolioBudgetService().reconcile_trade, trade_id, request.model_dump())
+
+
+@router.get('/accounts/{account_id}/audit')
+def portfolio_audit(account_id: int):
+    return {'items': _account_state_call(PortfolioBudgetService().audit, account_id)}
 
 
 def _account_state_call(method, *args, **kwargs):
@@ -226,6 +327,11 @@ def create_trade(request: PortfolioTradeCreateRequest) -> PortfolioEventCreatedR
             currency=request.currency,
             trade_uid=request.trade_uid,
             note=request.note,
+            executed_at=request.executed_at,
+            fee_status=request.fee_status,
+            price_basis=request.price_basis,
+            intent_id=request.intent_id,
+            dedup_hash=hashlib.sha256(f'manual:{request.request_key}'.encode()).hexdigest() if request.request_key else None,
         )
         return PortfolioEventCreatedResponse(**data)
     except PortfolioBusyError as exc:
@@ -616,6 +722,30 @@ def get_allocation_plan_status(
         raise _bad_request(exc)
     except Exception as exc:
         raise _internal_error("Evaluate allocation plan failed", exc)
+
+
+def _allocation_review_call(call, *args, **kwargs):
+    try:
+        return call(*args, **kwargs)
+    except AllocationReviewConflict as exc:
+        raise api_error(409, "conflict", str(exc))
+    except LookupError as exc:
+        raise api_error(404, "not_found", str(exc))
+    except ValueError as exc:
+        raise _bad_request(exc)
+    except Exception as exc:
+        raise _internal_error("Allocation review failed", exc)
+
+
+@router.get("/allocation-plans/{plan_id}/reviews", response_model=AllocationReviewList)
+def list_allocation_reviews(plan_id: int, target_key: str = Query(..., min_length=1, max_length=64),
+                            limit: int = Query(20, ge=1, le=100), before_id: Optional[int] = Query(None, gt=0)):
+    return _allocation_review_call(AllocationReviewService().list, plan_id, target_key, limit, before_id)
+
+
+@router.post("/allocation-plans/{plan_id}/reviews", response_model=AllocationReviewItem)
+def append_allocation_review(plan_id: int, request: AllocationReviewWrite):
+    return _allocation_review_call(AllocationReviewService().append, plan_id, request.model_dump())
 
 
 @router.post(

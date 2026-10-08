@@ -271,7 +271,9 @@ def evaluate_allocation_plan(
     cash_target = sum(item["target_amount"] for item in target_results if item["source"] == "cash")
     reserve = max(cash_target, _finite_number(plan.get("cash_reserve_amount")))
     cash_known = ledger_complete and account_count > 0 and bool(normalized_snapshot.get("cash_reliable", True))
-    available_cash = round(max(0.0, cash_value - reserve), 2) if cash_known else None
+    reserved_orders = max(0.0, _finite_number(normalized_snapshot.get('reserved_cash_value')))
+    available_cash = math.floor(max(0.0, cash_value - reserve - reserved_orders) * 100 + 1e-8) / 100 if cash_known else None
+    budget_pools = [dict(b) for b in normalized_snapshot.get('budget_pools', [])]
     remaining = available_cash or 0.0
     for item in target_results:
         if item["source"] == "cash" and item["action"] in {"add", "reduce"}:
@@ -285,8 +287,20 @@ def evaluate_allocation_plan(
                 item["limitations"].append("cash_budget_unavailable")
             else:
                 amount = min(item["allocation_cap"], remaining)
+                matches = [b for b in budget_pools if b['market'] == item['market']
+                           and set(b['symbols']) & set(item['symbols'])]
+                if any(b['remaining'] is None for b in matches):
+                    item.update(action='review', recommended_amount=0.0, reason='period_budget_unverified')
+                    item['limitations'].append('period_budget_unverified')
+                    plan_limitations.append('period_budget_unverified')
+                    continue
+                for budget in matches:
+                    amount = min(amount, max(0.0, budget['remaining']))
+                amount = math.floor(max(0.0, amount) * 100 + 1e-8) / 100
                 if amount < item["allocation_cap"]:
-                    item["reason"] = "cash_budget_limited"
+                    item["reason"] = 'period_budget_limited' if matches else "cash_budget_limited"
+                for budget in matches:
+                    budget['remaining'] = max(0.0, budget['remaining'] - amount)
                 item["recommended_amount"] = round(amount, 2)
                 if amount == 0:
                     item["action"] = "hold"

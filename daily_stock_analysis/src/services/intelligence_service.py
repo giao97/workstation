@@ -161,6 +161,12 @@ class IntelligenceService:
             "page_size": max(1, min(int(filters.get("page_size") or 50), 100)),
         }
 
+    def set_source_enabled(self, source_id: int, enabled: bool) -> Dict[str, Any]:
+        if self.repo.get_source(source_id) is None:
+            raise IntelligenceServiceError(f"Intelligence source not found: {source_id}")
+        self.repo.update_source_enabled(source_id, enabled)
+        return self._source_to_dict(self.repo.get_source(source_id))
+
     def list_source_templates(self, **filters: Any) -> Dict[str, Any]:
         market = str(filters.get("market") or "").strip().lower()
         source_type = str(filters.get("source_type") or "").strip().lower()
@@ -625,6 +631,7 @@ class IntelligenceService:
                 str(item.get("url") or item.get("mobileUrl") or ""),
                 source_name,
                 self._parse_datetime_or_timestamp(published_raw),
+                published_raw=published_raw,
             ))
         return [entry for entry in entries if entry]
 
@@ -635,6 +642,7 @@ class IntelligenceService:
             self._text(node, "link"),
             source_name,
             self._parse_datetime(self._text(node, "pubDate") or self._text(node, "published")),
+            published_raw=self._text(node, "pubDate") or self._text(node, "published"),
         )
 
     def _parse_atom_entry(self, node: ET.Element, source_name: str) -> Optional[FeedEntry]:
@@ -649,9 +657,10 @@ class IntelligenceService:
             url,
             source_name,
             self._parse_datetime(self._text(node, "published") or self._text(node, "updated")),
+            published_raw=self._text(node, "published") or self._text(node, "updated"),
         )
 
-    def _build_entry(self, title: str, summary: str, url: str, source_name: str, published_at: Optional[datetime]) -> Optional[FeedEntry]:
+    def _build_entry(self, title: str, summary: str, url: str, source_name: str, published_at: Optional[datetime], *, published_raw: Any = None) -> Optional[FeedEntry]:
         title = self._clean_text(title)[:300]
         summary = self._clean_text(summary)[:2000]
         url = url.strip()
@@ -666,7 +675,8 @@ class IntelligenceService:
         else:
             digest = hashlib.sha256(f"{source_name}|{title}|{published_at}".encode("utf-8")).hexdigest()[:24]
             url_key = f"no-url:intel:{digest}"
-        return FeedEntry(title or url_key, summary, url_key, source_name, published_at, {"source": source_name})
+        return FeedEntry(title or url_key, summary, url_key, source_name, published_at,
+                         {"source": source_name, "published_at_raw": published_raw})
 
     def _entry_to_item_fields(self, entry: FeedEntry, source: IntelligenceSource, now: datetime) -> Dict[str, Any]:
         return {

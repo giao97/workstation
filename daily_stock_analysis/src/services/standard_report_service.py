@@ -71,11 +71,12 @@ class StandardReportService:
         return StandardStockReport(
             stock_code=research.stock_code, market=research.market, as_of=research.as_of,
             status="partial" if available_count else "insufficient",
-            confidence_pct=round(available_count / len(sections) * 100.0, 2), sections=sections,
+            contract_version="1.1",
+            coverage_pct=round(available_count / len(sections) * 100.0, 2), sections=sections,
             disclosures=[
                 "仅用于投研与决策辅助，不构成个性化投资建议。",
                 "系统不连接券商、不自动下单；条件式关注区间必须由可复算数据生成。",
                 "缺失章节保持 missing，不由模型臆造事实。",
+                "coverage_pct 仅为非缺失章节占比（含 limited），不是证据质量、预测置信度或交易胜率；confidence_pct 未校准，保持 null。",
             ],
         )
-

@@ -16,6 +16,7 @@ from api.v1.schemas.intelligence import (
     IntelligenceItemListResponse,
     IntelligenceSourceCreateRequest,
     IntelligenceSourceItem,
+    IntelligenceSourceEnabledRequest,
     IntelligenceSourceListResponse,
     IntelligenceSourceTemplateCreateRequest,
     IntelligenceSourceTemplateListResponse,
@@ -71,6 +72,16 @@ def list_sources(
         ))
     except Exception as exc:
         raise _internal_error("List intelligence sources failed", exc)
+
+
+@router.patch("/sources/{source_id}", response_model=IntelligenceSourceItem)
+def update_source_enabled(source_id: int, request: IntelligenceSourceEnabledRequest):
+    try:
+        return IntelligenceSourceItem(**IntelligenceService().set_source_enabled(source_id, request.enabled))
+    except IntelligenceServiceError as exc:
+        raise _not_found(str(exc))
+    except Exception as exc:
+        raise _internal_error("Update intelligence source failed", exc)
 
 
 @router.get("/sources/templates", response_model=IntelligenceSourceTemplateListResponse, responses={500: {"model": ErrorResponse}}, summary="List built-in intelligence source templates")

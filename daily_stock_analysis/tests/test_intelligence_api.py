@@ -79,6 +79,28 @@ class IntelligenceApiTestCase(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()["error"], "validation_error")
 
+    def test_source_toggle_does_not_fetch_or_change_address(self) -> None:
+        created = self.client.post('/api/v1/intelligence/sources', json={
+            'name': 'toggle-test', 'url': 'https://feeds.example.com/rss.xml', 'enabled': False,
+        }).json()
+        url = f"/api/v1/intelligence/sources/{created['id']}"
+        with patch('src.services.intelligence_service.requests.get') as fetch:
+            enabled = self.client.patch(url, json={'enabled': True})
+            self.assertEqual(enabled.status_code, 200)
+            self.assertTrue(enabled.json()['enabled'])
+            self.assertEqual(enabled.json()['url'], created['url'])
+            self.assertFalse(self.client.patch(url, json={'enabled': False}).json()['enabled'])
+            self.assertEqual(self.client.patch(url, json={'enabled': True, 'url': 'https://other.example/feed'}).status_code, 422)
+            fetch.assert_not_called()
+        self.assertEqual(self.client.patch('/api/v1/intelligence/sources/99999', json={'enabled': True}).status_code, 404)
+
+    def test_source_toggle_failure_is_generic(self) -> None:
+        with patch('src.services.intelligence_service.IntelligenceService.set_source_enabled',
+                   side_effect=RuntimeError('token=secret')):
+            response = self.client.patch('/api/v1/intelligence/sources/1', json={'enabled': True})
+        self.assertEqual(response.status_code, 500)
+        self.assertNotIn('secret', response.text)
+
     def test_duplicate_source_name_returns_validation_error(self) -> None:
         payload = {"name": "dupe", "url": "https://feeds.example.com/rss.xml", "scope_type": "market"}
         first = self.client.post("/api/v1/intelligence/sources", json=payload)

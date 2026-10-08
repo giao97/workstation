@@ -28,6 +28,8 @@ from src.storage import (
     PortfolioTrade,
     PortfolioOpeningBalance,
     PortfolioFundingSnapshot,
+    PortfolioAuditEvent,
+    PortfolioBudgetTradeAdjustment,
     StockDaily,
 )
 
@@ -361,6 +363,9 @@ class PortfolioRepository:
         tax: float,
         note: Optional[str] = None,
         dedup_hash: Optional[str] = None,
+        executed_at: Optional[datetime] = None,
+        fee_status: str = 'unknown',
+        intent_id: Optional[int] = None,
     ) -> PortfolioTrade:
         self._assert_after_opening_balance(session, account_id, trade_date)
         row = PortfolioTrade(
@@ -377,6 +382,9 @@ class PortfolioRepository:
             tax=tax,
             note=note,
             dedup_hash=dedup_hash,
+            executed_at=executed_at,
+            fee_status=fee_status,
+            intent_id=intent_id,
         )
         session.add(row)
         self._invalidate_account_cache_in_session(
@@ -468,6 +476,10 @@ class PortfolioRepository:
         ).scalar_one_or_none()
         if row is None:
             return False
+        session.add(PortfolioAuditEvent(account_id=row.account_id, entity='trade', entity_id=row.id,
+                    action='delete', payload_json=json.dumps(
+                        {c.name: getattr(row, c.name) for c in row.__table__.columns}, default=str)))
+        session.execute(delete(PortfolioBudgetTradeAdjustment).where(PortfolioBudgetTradeAdjustment.trade_id == trade_id))
         self._invalidate_account_cache_in_session(
             session=session,
             account_id=int(row.account_id),

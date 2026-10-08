@@ -23,7 +23,7 @@ class DecisionScaleBand:
 
 
 CANONICAL_DECISION_SCALE: tuple[DecisionScaleBand, ...] = (
-    DecisionScaleBand(80, 100, "strong_buy", "buy", "buy", "强烈买入", "高胜率机会，可执行买入/加仓计划"),
+    DecisionScaleBand(80, 100, "strong_buy", "buy", "buy", "强烈买入", "研究评分较高，非统计胜率；仍须独立核验交易条件"),
     DecisionScaleBand(60, 79, "buy", "buy", "buy", "买入", "偏积极机会，允许少量待确认项"),
     DecisionScaleBand(40, 59, "watch", "watch", "hold", "观望", "信号分歧或确认不足，等待触发条件"),
     DecisionScaleBand(20, 39, "reduce", "reduce", "sell", "减仓", "风险明显抬升，优先降低暴露"),

@@ -42,7 +42,7 @@ Web 展示必须把这些 wire value 映射为当前 UI 语言的用户可读标
 
 | score | signal key | `action` | legacy `decision_type` | 语义 |
 | --- | --- | --- | --- | --- |
-| 80-100 | `strong_buy` | `buy` | `buy` | 强烈买入，高胜率机会，可执行买入/加仓计划 |
+| 80-100 | `strong_buy` | `buy` | `buy` | 研究评分较高，非统计胜率；仍须独立核验交易条件 |
 | 60-79 | `buy` | `buy` | `buy` | 偏积极机会，允许少量待确认项 |
 | 40-59 | `watch` | `watch` | `hold` | 信号分歧或确认不足，等待触发条件 |
 | 20-39 | `reduce` | `reduce` | `sell` | 风险明显抬升，优先降低暴露 |
@@ -51,6 +51,12 @@ Web 展示必须把这些 wire value 映射为当前 UI 语言的用户可读标
 如果 `score >= 60` 但最终 `action` 是 `hold/watch`，或 `score < 40` 但最终 `action` 仍是 `hold/watch`，必须有明确 guardrail 解释，例如 `dashboard.decision_stability.reason`、`dashboard.decision_score_calibration.guardrail_reason` 或 `metadata.guardrail_reason`。风控降级会保留 `raw_score`、`adjusted_score`、`raw_action`、`final_action` 和原因；没有明确原因的中性动作在 DecisionSignal 提取时会按 canonical score 对齐为 `buy/reduce/sell`。
 
 ## 生命周期、去重与状态
+
+### 信心指标不是交易胜率
+
+历史 `confidence` 的高/中/低到 0.8/0.6/0.4 映射为兼容数值，不是统计概率。新提取及重评保存的信号以 metadata `confidence_semantics=uncalibrated_ordinal_not_probability` 明示其语义；不改写历史数据或已有风控阈值。Web 卡片、详情、时间线及重评预览使用“信心指标（未校准，非胜率）”，显示 `0.8 / 1` 而不是 `80%`。未知或非法值不得被转换成有效概率。研究评分、报告章节覆盖率与后验表现仍是独立指标，评分较高不能替代行情、现金、费用和底仓核验。
+
+Compatibility: the numeric confidence API and existing guardrails are unchanged. Newly extracted/reassessed metadata labels the value as an uncalibrated ordinal indicator. Web views no longer format it as a probability; historical records are not rewritten.
 
 `src/services/decision_signal_service.py` 是信号生命周期的主入口：
 

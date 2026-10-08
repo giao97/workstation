@@ -3,6 +3,7 @@ import { portfolioApi } from '../../api/portfolio';
 import { getParsedApiError } from '../../api/error';
 import { useUiLanguage } from '../../contexts/UiLanguageContext';
 import { Card, InlineAlert } from '../common';
+import { ProfilePreviewPanel } from './ProfilePreviewPanel';
 import type { AccountState, FundingWrite, OpeningBalanceWrite, OpeningPreview, PortfolioAccountItem } from '../../types/portfolio';
 
 const inputClass = 'input-surface rounded-lg border px-3 py-2 text-sm w-full';
@@ -19,6 +20,9 @@ export function AccountStatePanel({ accounts, onSaved }: {
   const zh = language === 'zh';
   const [expanded, setExpanded] = useState(false);
   const [accountId, setAccountId] = useState<number | null>(null);
+  const [draft, setDraft] = useState<OpeningBalanceWrite | undefined>();
+  const [draftAccountId, setDraftAccountId] = useState<number | null>(null);
+  const [draftRevision, setDraftRevision] = useState(0);
   const account = accounts.find((a) => a.id === accountId) ?? accounts[0];
   return <Card>
     <button className="btn-secondary text-sm" type="button" onClick={() => setExpanded(!expanded)} aria-expanded={expanded}>
@@ -27,24 +31,28 @@ export function AccountStatePanel({ accounts, onSaved }: {
     <p className="text-xs text-secondary mt-2">{zh ? '已有持仓不是新买入；计划追加资金不等于已到账现金。先预览核对，再确认写入。' : 'Existing inventory is not a new trade. Planned funding is not cash. Preview and reconcile before confirming.'}</p>
     {expanded && <div className="mt-3 space-y-3">
       <label className="text-xs">{zh ? '基线 / 资金账户' : 'Inventory / funding account'}
-        <select className={inputClass} value={account?.id ?? ''} onChange={(e) => setAccountId(Number(e.target.value))}>
+        <select className={inputClass} value={account?.id ?? ''} onChange={(e) => { setAccountId(Number(e.target.value)); setDraft(undefined); }}>
           {!accounts.length && <option value="">{zh ? '请先创建账户' : 'Create an account first'}</option>}
           {accounts.map((a) => <option key={a.id} value={a.id}>{a.name} · {a.baseCurrency}</option>)}
         </select>
       </label>
-      {account && <AccountEditor key={account.id} account={account} onSaved={onSaved} zh={zh} />}
+      <ProfilePreviewPanel key={`profile-${account?.id ?? 'none'}`} zh={zh}
+        onDraft={account?.market === 'us' && account.baseCurrency === 'USD' ? (value) => {
+          setDraft(value); setDraftAccountId(account.id); setDraftRevision((v) => v + 1);
+        } : undefined} />
+      {account && <AccountEditor key={`${account.id}-${draftRevision}`} account={account} onSaved={onSaved} zh={zh} draft={draftAccountId === account.id ? draft : undefined} />}
     </div>}
   </Card>;
 }
 
-function AccountEditor({ account, onSaved, zh }: { account: PortfolioAccountItem; onSaved: () => Promise<void>; zh: boolean }) {
+function AccountEditor({ account, onSaved, zh, draft }: { account: PortfolioAccountItem; onSaved: () => Promise<void>; zh: boolean; draft?: OpeningBalanceWrite }) {
   const [state, setState] = useState<AccountState | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0);
   const [preview, setPreview] = useState<OpeningPreview | null>(null);
-  const [opening, setOpening] = useState<OpeningBalanceWrite>({ asOf: localDate(-1), cashBalance: null,
+  const [opening, setOpening] = useState<OpeningBalanceWrite>(draft ?? { asOf: localDate(-1), cashBalance: null,
     reportedMarketValue: null, reportedEquity: null,
     positions: [{ symbol: '', quantity: NaN, avgCost: NaN, reportedMarketValue: null }] });
   const [funding, setFunding] = useState<FundingWrite>({ asOf: localDate(), settledCash: null,

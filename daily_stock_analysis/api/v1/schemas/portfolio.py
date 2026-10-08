@@ -3,10 +3,16 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+from pydantic_core import PydanticCustomError
+from src.schemas.allocation_review import AllocationReviewItem
+
+
+class PortfolioProfilePreviewRequest(BaseModel):
+    document: str = Field(..., min_length=1, max_length=128 * 1024)
 
 
 class PortfolioAccountCreateRequest(BaseModel):
@@ -98,6 +104,7 @@ class PortfolioAccountStateResponse(BaseModel):
 
 
 class PortfolioTradeCreateRequest(BaseModel):
+    request_key: Optional[str] = Field(None, min_length=1, max_length=128)
     account_id: int
     symbol: str = Field(..., min_length=1, max_length=16)
     trade_date: date
@@ -110,6 +117,76 @@ class PortfolioTradeCreateRequest(BaseModel):
     currency: Optional[str] = Field(None, min_length=3, max_length=8)
     trade_uid: Optional[str] = Field(None, max_length=128)
     note: Optional[str] = Field(None, max_length=255)
+    executed_at: Optional[datetime] = None
+    fee_status: Literal['unknown', 'estimated', 'confirmed'] = 'unknown'
+    price_basis: Literal['execution'] = 'execution'
+    intent_id: Optional[int] = Field(None, gt=0)
+
+    @model_validator(mode='after')
+    def confirmed_costs_are_explicit(self):
+        if self.fee_status == 'confirmed' and not {'fee', 'tax'} <= self.model_fields_set:
+            raise PydanticCustomError(
+                'confirmed_costs_required',
+                'Confirmed costs require explicit fee and tax, including verified zeros',
+            )
+        return self
+
+
+class PortfolioTradeReconcileRequest(BaseModel):
+    expected_revision: int = Field(..., ge=1)
+    executed_at: Optional[datetime] = None
+    fee: float = Field(..., ge=0, allow_inf_nan=False)
+    tax: float = Field(..., ge=0, allow_inf_nan=False)
+    fee_status: Literal['unknown', 'estimated', 'confirmed']
+    reason: str = Field(..., min_length=1, max_length=255, pattern=r'\S')
+
+
+class PortfolioBudgetRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=64, pattern=r'\S')
+    currency: str = Field(..., min_length=3, max_length=8)
+    timezone: str = Field(..., max_length=64)
+    start_date: date
+    end_date: date
+    amount: float = Field(..., gt=0, allow_inf_nan=False)
+    symbols: List[str] = Field(..., min_length=1, max_length=100)
+    ledger_complete: bool = False
+    request_key: str = Field(..., min_length=1, max_length=128, pattern=r'\S')
+
+
+
+
+class PortfolioBudgetConfirmation(BaseModel):
+    confirmed: bool
+
+
+class PortfolioBudgetAdjustment(BaseModel):
+    fx_rate: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
+    excluded: bool = False
+    reason: str = Field(..., min_length=1, max_length=255, pattern=r'\S')
+
+
+class PortfolioIntentRequest(BaseModel):
+    symbol: str = Field(..., min_length=1, max_length=16)
+    quantity: float = Field(..., gt=0, allow_inf_nan=False)
+    limit_price: float = Field(..., gt=0, allow_inf_nan=False)
+    fee_reserve: float = Field(..., ge=0, allow_inf_nan=False)
+    fx_rate: float = Field(..., gt=0, allow_inf_nan=False)
+    expires_at: datetime
+    request_key: str = Field(..., min_length=1, max_length=128, pattern=r'\S')
+
+
+class PortfolioIntentStateRequest(BaseModel):
+    expected_revision: int = Field(..., ge=1)
+    status: Literal['submitted', 'pending_cancel', 'cancelled', 'expired']
+    reason: str = Field(..., min_length=1, max_length=255, pattern=r'\S')
+
+
+class PortfolioPerformanceRequest(BaseModel):
+    start_date: date
+    end_date: date
+    symbols: List[str] = Field(default_factory=list, max_length=50)
+    ledger_confirmed: bool = False
+    include_realtime: bool = False
 
 
 class PortfolioCashLedgerCreateRequest(BaseModel):
@@ -156,6 +233,11 @@ class PortfolioTradeListItem(BaseModel):
     tax: float
     note: Optional[str] = None
     created_at: Optional[str] = None
+    executed_at: Optional[str] = None
+    fee_status: str = 'unknown'
+    price_basis: str = 'execution'
+    revision: int = 1
+    intent_id: Optional[int] = None
 
 
 class PortfolioTradeListResponse(BaseModel):
@@ -247,6 +329,7 @@ class PortfolioAccountSnapshot(BaseModel):
     total_market_value: float
     total_equity: float
     realized_pnl: float
+    net_pnl_verified: bool = False
     unrealized_pnl: float
     fee_total: float
     tax_total: float
@@ -265,6 +348,7 @@ class PortfolioSnapshotResponse(BaseModel):
     total_market_value: float
     total_equity: float
     realized_pnl: float
+    net_pnl_verified: bool = False
     unrealized_pnl: float
     fee_total: float
     tax_total: float
@@ -275,6 +359,9 @@ class PortfolioSnapshotResponse(BaseModel):
 
 
 class PortfolioImportTradeItem(BaseModel):
+    fee_status: Literal['unknown', 'estimated', 'confirmed'] = 'unknown'
+    executed_at: Optional[datetime] = None
+    price_basis: Literal['execution'] = 'execution'
     trade_date: str
     symbol: str
     side: Literal["buy", "sell"]
@@ -431,6 +518,22 @@ class PortfolioAllocationMatchedPosition(BaseModel):
     price_stale: bool = False
 
 
+class CoreEntryAssessment(BaseModel):
+    symbol: Literal['QQQM', 'VOO']
+    method: str
+    state: Literal['candidate', 'wait', 'risk_review', 'data_required']
+    as_of: Optional[str]
+    evaluated_at: str
+    sources: List[str]
+    metrics: Dict[str, float]
+    reasons: List[str]
+    checks: List[str]
+    limitations: List[str]
+    executable: Literal[False] = False
+    allocation_ready: bool
+    allocation_action: str
+
+
 class PortfolioAllocationTargetStatus(BaseModel):
     key: str
     name: str
@@ -457,6 +560,8 @@ class PortfolioAllocationTargetStatus(BaseModel):
     data_complete: bool
     limitations: List[str] = Field(default_factory=list)
     matched_positions: List[PortfolioAllocationMatchedPosition] = Field(default_factory=list)
+    research_reviews: List[AllocationReviewItem] = Field(default_factory=list)
+    core_entries: List[CoreEntryAssessment] = Field(default_factory=list)
 
 
 class PortfolioAllocationUnassignedPosition(BaseModel):

@@ -20,6 +20,13 @@ def render_allocation_status(status: Dict[str, Any], *, language: str = "zh") ->
     def money(value: Any) -> str:
         return ("待核实" if zh else "Unknown") if value is None else f"{float(value):,.2f}"
 
+    def research_text(value: Any) -> str:
+        # Manual evidence is text, not Markdown instructions or remote images.
+        value = cell(value).replace("\\", "\\\\")
+        for character in "[]!*_":
+            value = value.replace(character, "\\" + character)
+        return value
+
     conditions_text = {
         "ledger_not_confirmed": "请确认持仓与现金已完整录入",
         "portfolio_accounts_missing": "请先建立账户并录入资产",
@@ -32,6 +39,8 @@ def render_allocation_status(status: Dict[str, Any], *, language: str = "zh") ->
         "cash_fx_unreliable": "请刷新现金换算汇率",
         "cash_budget_unavailable": "请核实可用现金",
         "cash_budget_limited": "已受剩余现金预算限制",
+        "period_budget_limited": "已受本轮共享投入预算限制",
+        "period_budget_unverified": "请核实本轮成交、费用和换算口径",
         "cash_reserve_only": "保留现金，不生成买卖动作",
         "below_target": "低于目标，需确认交易条件",
         "below_min_band": "低于配置下限，需确认交易条件",
@@ -79,6 +88,48 @@ def render_allocation_status(status: Dict[str, Any], *, language: str = "zh") ->
     if status["unassigned_positions"]:
         names = ", ".join(cell(item["symbol"]) for item in status["unassigned_positions"])
         lines.extend(["", ("未归类持仓：" if zh else "Unassigned positions: ") + names])
+    entries = [entry for target in status['targets'] for entry in target.get('core_entries', [])]
+    if entries:
+        states = {'candidate': '回撤候选，待综合复核', 'wait': '等待价格条件',
+                  'risk_review': '先复核风险，不机械补仓', 'data_required': '日线数据不足，非看空结论'}
+        entry_reasons = {'calendar_unavailable': '交易日历不可用',
+                         'need_latest_60_sessions': '需最新连续 60 个完整交易日日线',
+                         'invalid_close': '收盘价异常', 'source_missing_or_mixed': '来源缺失或混用',
+                         'large_move_or_deep_drawdown': '异常跳变、急跌或深度回撤',
+                         'pullback_and_close_not_lower': '回撤线索成立，最近收盘未再下降',
+                         'wait_for_stabilization': '回撤后收盘仍下跌，等待企稳线索',
+                         'no_pullback_setup': '尚未满足试行回撤条件'}
+        lines.extend(['', '长期择机分批（日线参考，非做 T 或买入指令）：' if zh else
+                      'Opportunity-based core accumulation (daily reference, not an order):'])
+        for entry in entries:
+            metrics = '; '.join(f'{cell(k)}={v:.2f}' for k, v in entry['metrics'].items())
+            why = '; '.join(entry_reasons.get(r, r) if zh else r for r in entry['reasons'])
+            lines.append(f"- {cell(entry['symbol'])} · {states[entry['state']] if zh else entry['state']} · "
+                         f"{cell(entry['as_of'] or '—')} · {cell(' / '.join(entry['sources']) or '—')} · "
+                         f"{cell(entry['method'])}；{cell(why)}；{metrics}")
+        lines.append('不设固定买入日；近期低位不是历史最低价，账本成本不单独触发买入。'
+                     '试行规则未经回测，复权、估值和消息待核验；现金与预算上限沿用上表，不重复分配。'
+                     '新收盘或重大消息后重评，执行前刷新当日行情及交易规则。' if zh else
+                     'No fixed purchase dates. Recent lows are not all-time lows; cost alone is not a trigger. '
+                     'Unvalidated heuristics; adjustment basis, valuation and news need review. '
+                     'Caps above are shared, not reallocated. Reassess after a new close or material news and verify live execution conditions.')
+    reviews = [(target, review) for target in status["targets"] for review in target.get("research_reviews", [])]
+    if reviews:
+        decisions = {"maintain_plan": "配置计划维持", "wait": "等待", "data_required": "补数据", "pause": "暂停研究计划"}
+        states = {"active": "待按条件复核", "due": "已到复核时间", "plan_changed": "计划已变更，旧判断待重审", "plan_inactive": "计划停用"}
+        lines.extend(["", "长期配置 / 短线复核（人工记录，非实时信号）：" if zh else
+                      "Long-term / tactical review (manual record, not a live signal):"])
+        for target, review in reviews:
+            horizon = ("长期配置" if review['horizon'] == 'long_term' else "短线择时") if zh else review['horizon']
+            lines.append(f"- {cell(target['name'])} · {horizon} · "
+                         f"{cell(decisions.get(review['decision']) if zh else review['decision'])} · "
+                         f"{cell(states.get(review['state']) if zh else review['state'])}；"
+                         f"{research_text(review['reason'])}；{research_text(review['evidence'])}；"
+                         f"{'复核条件' if zh else 'Review condition'}：{research_text(review['next_condition'])}；"
+                         f"{'最迟复核' if zh else 'Review by'}：{cell(review['review_due_at'])}；"
+                         f"v{review['expected_plan_version']} / #{review['id']} · {cell(review['created_at'])}")
+        lines.append("到期或计划变更不自动延续旧判断；短线等待不修改长期目标或共享预算，维持计划也不代表立即买入。" if zh else
+                     "Due or changed plans require re-review. Tactical waiting does not change long-term targets or shared budgets; maintaining a plan is not permission to buy.")
     lines.extend(["", ("等待条件：现金覆盖待核实不代表可执行；先补齐标记的数据，金额仅为配置上限，执行前仍需核验当日行情、估值、消息、交易费用及换汇可用性。"
                        if zh else "Unknown cash coverage is not executable. Resolve data flags and verify current quotes, valuation, news, fees and currency availability. Amounts are allocation caps.")])
     return "\n".join(lines)

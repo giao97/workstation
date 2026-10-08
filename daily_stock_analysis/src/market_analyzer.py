@@ -736,6 +736,9 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
 
         # 按 region 使用不同的新闻搜索词
         search_queries = self.profile.news_queries
+        if self.region in {'cn', 'hk', 'us'}:
+            from src.core.sector_research import sector_queries
+            search_queries = list(search_queries) + sector_queries(self.region)
         review_language = self._get_review_language()
         market_names = {
             "cn": "大盘" if review_language == "zh" else "A-share market",
@@ -751,12 +754,16 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
             # 根据 region 设置搜索上下文名称，避免美股搜索被解读为 A 股语境
             market_name = market_names.get(self.region, "大盘")
             for query in search_queries:
-                response = self.search_service.search_stock_news(
-                    stock_code="market",
-                    stock_name=market_name,
-                    max_results=3,
-                    focus_keywords=query.split()
-                )
+                try:
+                    response = self.search_service.search_stock_news(
+                        stock_code="market",
+                        stock_name=market_name,
+                        max_results=3,
+                        focus_keywords=query.split()
+                    )
+                except Exception:
+                    logger.warning('[大盘] news query failed; continuing remaining sector scans')
+                    continue
                 if response and response.results:
                     all_news.extend(response.results)
                     logger.info(
@@ -1670,7 +1677,8 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         
         # 新闻信息 - 支持 SearchResult 对象或字典
         news_text = ""
-        for i, n in enumerate(news[:6], 1):
+        from src.core.sector_research import diverse_news
+        for i, n in enumerate(diverse_news(news), 1):
             # 兼容 SearchResult 对象和字典
             title = self._compact_news_text(self._get_news_field(n, "title"), limit=90)
             snippet = self._compact_news_text(self._get_news_field(n, "snippet"), limit=220)
@@ -1810,6 +1818,12 @@ Concept lagging: {bottom_concepts_text if bottom_concepts_text else "N/A"}"""
 ## Market News
 {news_placeholder}
 
+## Beyond-holdings coverage
+Compare supplied sector/theme rankings with news, including batteries/storage and market-led themes when supported.
+Separate premarket-known catalysts, intraday reported strength and hindsight review. Missing coverage is not absence of opportunity.
+Without archived point-in-time evidence, never claim advance discovery. Headlines/limit-ups are not buy triggers.
+State confirmation/invalidation and missing minute-price, spread or timing evidence; do not invent executable entries.
+
 {data_no_indices_hint}
 
 {self._get_strategy_prompt_block()}
@@ -1863,6 +1877,13 @@ Output the report content directly, no extra commentary.
 
 ## 市场新闻
 {news_placeholder}
+
+## 持仓外机会覆盖要求
+检查给定行业/概念榜与新闻的交集和背离，不只围绕持仓或宏观。
+电池/固态电池/储能等有材料才讨论，未取得材料写覆盖缺口，不等于没有机会。
+区分盘前已知催化、盘中才出现的逆势/涨停扩散和事后复盘；没有历史快照不能宣称提前发现。
+热点必须区分新闻线索、等待确认、条件失效；列验证和失效条件，不把涨停或连续上涨当买入理由。
+没有分钟量价、时点和成交条件时不生成可执行买点，不能把持仓外候选写成已有持仓。
 
 {data_no_indices_hint}
 
@@ -2049,6 +2070,21 @@ Market conditions can change quickly. The data above is for reference only and d
 
         # 3. 生成复盘报告
         report = self.generate_market_review(overview, news)
+        # Reuse this run's sources; no extra searches, model calls or notifications.
+        event_brief = None
+        if self.region in {"cn", "hk", "us"}:
+            try:
+                import uuid
+                from src.services.market_event_service import MarketEventService
+                event_brief = MarketEventService().capture_report_news(
+                    news, self.region, "zh" if self._get_review_language() == "zh" else "en",
+                    f"review-{uuid.uuid4().hex}",
+                )
+                report = f"{report}\n\n{event_brief['markdown']}"
+            except Exception:
+                logger.warning("Market event appendix unavailable; main market review retained")
+                report += ("\n\n> 市场事件证据归档失败，本期新闻覆盖不完整。" if self._get_review_language() == "zh"
+                           else "\n\n> Market event evidence archive unavailable; coverage is incomplete.")
         snapshot = self.build_market_light_snapshot(overview) if self._supports_market_light() else None
         structured_payload = self.build_market_review_payload(
             overview,
@@ -2056,6 +2092,8 @@ Market conditions can change quickly. The data above is for reference only and d
             report,
             snapshot,
         )
+        if event_brief is not None:
+            structured_payload["market_events"] = event_brief
 
         logger.info("========== 大盘复盘分析完成 ==========")
 

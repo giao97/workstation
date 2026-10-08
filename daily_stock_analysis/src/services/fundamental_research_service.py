@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
@@ -114,16 +115,44 @@ class FundamentalResearchService:
         records: List[EvidenceRecord] = []
         seen = set()
         entries = source_chain if isinstance(source_chain, list) else []
-        for index, raw in enumerate(entries):
+        for raw in entries:
             item = raw if isinstance(raw, dict) else {"provider": str(raw)}
             provider = str(item.get("provider") or "unknown")
             result = str(item.get("result") or "unknown")
-            dedupe_key = (provider, result)
+            provenance = {
+                key: item.get(key)
+                for key in (
+                    "source_url", "report_period", "filing_version",
+                    "content_hash", "raw_snapshot_ref",
+                )
+            }
+            timestamps = {}
+            for key in ("published_at", "effective_at", "retrieved_at"):
+                value = item.get(key)
+                if value is None or value == "":
+                    timestamps[key] = None
+                    continue
+                # Do not salvage a date prefix from a malformed timestamp:
+                # that could silently move evidence across the research cutoff.
+                try:
+                    text = str(value).strip()
+                    if text.endswith("Z"):
+                        text = text[:-1] + "+00:00"
+                    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(text)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"invalid evidence {key}") from exc
+                timestamps[key] = _utc_datetime(parsed)
+            identity = {
+                "provider": provider, "result": result, **provenance,
+                **{key: value.isoformat() if value is not None else None
+                   for key, value in timestamps.items()},
+            }
+            dedupe_key = json.dumps(identity, sort_keys=True, ensure_ascii=False)
             if dedupe_key in seen:
                 continue
             seen.add(dedupe_key)
             digest = hashlib.sha256(
-                f"{stock_code}|{market}|{provider}|{result}|{as_of.isoformat()}|{index}".encode("utf-8")
+                f"{stock_code}|{market}|{dedupe_key}".encode("utf-8")
             ).hexdigest()[:20]
             records.append(
                 EvidenceRecord(
@@ -134,15 +163,24 @@ class FundamentalResearchService:
                     source_type="structured_data",
                     source_tier=_source_tier(provider),
                     result=result,
-                    retrieved_at=as_of,
-                    metadata={"duration_ms": item.get("duration_ms")},
+                    **provenance,
+                    published_at=timestamps["published_at"],
+                    effective_at=timestamps["effective_at"],
+                    retrieved_at=timestamps["retrieved_at"] or as_of,
+                    metadata={
+                        "duration_ms": item.get("duration_ms"),
+                        "retrieval_time_inferred_from_cutoff": timestamps["retrieved_at"] is None,
+                    },
                 )
             )
 
         limitations: List[str] = []
         if not records:
             limitations.append("evidence_source_chain_missing")
-        limitations.append("provider_publication_time_not_available")
+        if not records or any(record.published_at is None for record in records):
+            limitations.append("provider_publication_time_not_available")
+        if any(record.metadata["retrieval_time_inferred_from_cutoff"] for record in records):
+            limitations.append("provider_retrieval_time_not_available")
         return EvidenceSnapshot(
             stock_code=stock_code,
             market=market,
@@ -242,7 +280,7 @@ class FundamentalResearchService:
         evidence_ids = [record.evidence_id for record in evidence.records if record.result == "ok"]
         periods = cls._financial_periods(enriched, evidence_ids)
         warnings = list(evidence.limitations)
-        if periods and periods[0].published_at is None:
+        if any(period.published_at is None for period in periods):
             warnings.append("financial_report_publication_time_missing")
         if not periods:
             warnings.append("normalized_financial_periods_missing")

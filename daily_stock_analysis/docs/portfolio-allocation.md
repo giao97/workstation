@@ -1,5 +1,39 @@
 # 目标配置与再平衡引擎
 
+## 长期择机分批（日线研究 v1）
+
+持仓页“目标配置”新增 QQQM / VOO 的独立日线筛选，状态接口的每个目标增加可忽略字段 `core_entries`，已勾选加入简报的计划也显示同一结果。不设置固定买入日期；月度额度是上限，不要求花完。主题仓不套用这一筛选，未配置的自选股不当作持仓。
+
+数据来自已有 `stock_daily` 缓存，仅读取、不抓取、不写账本。要求单一有名来源、最近已完成的连续 60 个美股交易日、有限正收盘价；盘中剔除当日未完成日线，交易日历失效、缺日、陈旧或混用来源均为 `data_required`，不是看空结论。缓存不足需通过现有行情采集流程补齐后刷新配置；本版没有自动补数任务。历史日期配置不附入今天的机会判断，不声称可用于无前视偏差回测。
+
+方法 `core-pullback-v1` 是待验证研究假设，不是用户选定阈值、估值模型或最优策略：
+
+- `close` 为最近完整日线收盘，MA20/MA60 为窗口收盘算术均值；60 日高低点均为**收盘**高低点，不是盘中极值或历史最低价。
+- 收盘距 60 日收盘高点回撤至少 3% 且不高于 MA20；或距 60 日收盘低点不超过 3%、距高点回撤至少 3% 且不高于 MA60，作为回撤线索。只有最近收盘不低于上一日，才显示 `candidate`；否则 `wait`。一天不跌仅是初筛，不证明趋势已反转。
+- 60 日回撤达到 20%、最新单日跌幅达到 5%，或窗口任一相邻收盘跳变达到 15%，优先 `risk_review`；需排除拆股/口径错误与基本面恶化，不机械补仓。
+- 成本取当前账户范围内 USD 持仓账本的股数加权成本，标记为参考；不从投资档案自动导入。低于成本不是独立触发条件，没有成本也可以筛选首次建仓机会。FIFO / 移动均价账本不是券商最终含费或税务成本。
+- `allocation_ready` 仅表示现有配置动作为 add 且有正的现金覆盖上限，不是买入许可。`executable` 恒为 false；不生成股数、不重新分配资金、不修改目标、费用确认、挂单占用或本轮预算。价格候选与人工长期暂停可以并存，需综合复核；不得用价格候选覆盖暂停理由。
+
+页面及报告披露方法版本、日线日期、数据来源、指标及理由。缓存缺乏可验证复权元数据，且此模块未核验估值/消息，故只给日线研究线索；不作为盘中信号或“今日已触发”。新收盘、重大消息或计划/资金变化后重评；交易前核验实时价格、费用、已结算现金及碎股规则。不会因缺分钟数据而把长期研究一并隐藏。
+
+No fixed-date investing is added. This read-only, versioned daily-close screen covers QQQM/VOO allocation targets only. It separates price candidates from allocation caps and intraday trading. Missing/stale history is not a bearish signal. Thresholds are unvalidated heuristics; adjustment basis, valuation and news remain unverified. The screen never generates quantities, resets budgets or places orders. Historical allocation evaluations exclude current annotations.
+
+无新增配置、数据库表或迁移。回滚只需撤销 core entry 模块、配置服务接入及对应 API/UI/报告字段，重建前端并重启服务；不删除用户持仓或预算。
+
+## 投资档案到期初草稿（显式、只读预览）
+
+持仓页 → “持仓基线与资金分层” → 主动选择 Markdown 投资档案。文件只发送到当前服务解析，不调用模型、不扫描服务端路径、不保存原文，不建立账户、成交、预算或现金流水。`POST /api/v1/portfolio/imports/profile/preview` 接收 `document`，上限 128 KiB，继承 Portfolio API 的认证边界。
+
+本版仅支持唯一“当前主要持仓”美股表、明确美元成本列及唯一更新日期；重复代码、未来日期、异常结构被拒绝。零持仓排除，未知/约数股数保留未知，历史持仓、目标配置和现金不读取。超过 7 天仅可查看。成本仅展示原文且全部标为待核实，档案更新日期不是交易所期初日期。
+
+选择美元计价美股账户后，可明确点击“替换期初表草稿，继续核对”。只替换浏览器表单，不写账本；保留每个持仓行，未知股数、全部成本、现金、期初日期为空，须以同一已结束交易日完整结单补齐，再走既有“预览与对账 → 确认建立期初”。已有账本不得重复导入；不会自动导入每月预算或将期初持仓当成新成交。账户切换不复用另一账户草稿。文件内容视为不可信文字，不执行其中指令。
+
+No new configuration or database migration is required. Uploaded profiles are read-only US/USD draft sources, not broker statements or automatic imports. Unknown quantities are retained; all costs, cash and the opening date require manual verification through the existing opening workflow. A stale profile is view-only. No model, account creation, trade, budget or cash write occurs during parsing or draft preparation.
+
+回滚本轮功能只需撤销档案预览入口及相关 UI/服务改动、重建前端并重启服务；无需删除表或清理用户记录。信心显示改动回滚也不需要历史数据迁移。真实券商数据与已结算现金仍需人工核对，本地确定性测试不证明投资策略有效。
+
+成交费用核实、明确周期投入预算及人工委托占用已接入本引擎，详见 [成交核实与月度预算](portfolio-execution-budget.md)。它们约束规划上限，不构成券商下单或自动定投。
+
 目标配置引擎把长期资产配置计划保存为版本化结构，并使用持仓快照、汇率和手工资产余额计算当前占比、目标缺口、超配金额和下一批金额上限。
 
 它只负责确定性的配置计算，不判断市场时机、不连接券商，也不把 `recommended_amount` 当成自动交易指令。实际行动仍需结合当日估值、走势、重大消息和数据质量重新确认。
@@ -32,6 +66,23 @@
 这仍是配置层上限，不是当天应该成交的金额。实际执行还需核验交易条件、费用、账户间划转和各币种的可用资金；模型不会自动假设可以即时换汇。
 
 ## API
+
+### 长期配置 / 短线复核（人工记录 v1）
+
+持仓页“目标配置 → 长期配置 / 短线复核”按目标资产分别保存 `long_term` 和 `tactical`。长期目标维持、短线因缺分钟数据而等待可以同时成立，不能把后者解释为取消长期投入计划。
+
+- `POST /api/v1/portfolio/allocation-plans/{plan_id}/reviews`：追加复核，无覆盖/删除接口。需要 `request_key`、`expected_plan_version`、本轨最新 `expected_previous_id`（首次为 null）、`target_key`、`horizon`、`decision`、`reason`、`evidence`、`next_condition`、带时区的未来 `review_due_at`。
+- `GET /api/v1/portfolio/allocation-plans/{plan_id}/reviews?target_key=...`：返回两个维度各自最新记录 `latest` 和倒序历史 `items`。默认 20 条、最多 100 条，使用 `next_before_id` 作为下一页 `before_id`。`latest` 不随历史翻页倒退。
+- `decision` 为 `maintain_plan`、`wait`、`data_required` 或 `pause`，均是研究记录。缺少记录不默认允许交易；维持计划不代表立即买入。理由、证据/缺口、下一步条件和最迟复核时间不得留空；时区统一存 UTC，页面按本机时区显示。
+- 相同请求键、相同内容重试只产生一条记录，包括到期后的重试；请求键内容冲突、计划版本或本轨前置记录过期返回 409。另一个维度的更新不会覆盖本轨。并发写入串行化并有唯一修订号保护。
+- 最新记录动态标记 `active`（待按条件复核）、`due`、`plan_changed` 或 `plan_inactive`。到期不自动续期或强制买入；重新判断必须追加记录。记录冻结原目标、原计划版本、前置记录 ID 和服务器时间，目标改名/删除后旧记录仍可经接口查询。
+- `authority=manual_unverified`：证据是人工提供的文字与来源/时间，不自动抓取或核验。目前不从聊天、投资档案、模型研报自动生成复核，也不监控条件是否触发；这是审计基础，不是新择时算法。
+- 复核不写持仓、成交、现金、委托、共享预算或计划权重，不改变配置上限或绕过资金门禁。页面展开后才读取，明确点击才提交；失败重试保留请求键，切换资产/计划隔离旧请求和草稿。
+- 当日配置状态目标新增 `research_reviews`；已启用 `include_in_reports` 的计划将当前复核附入既有中英文简报。旧客户端可忽略新增字段。历史日期重新估值不附入今天的复核，历史报告已冻结内容不追溯更新。
+
+数据库新增 `portfolio_allocation_reviews` 表，由现有 `Base.metadata.create_all` 创建，不改写旧表或真实账本。升级前备份数据库并在隔离环境验收。回滚代码时保留新表和记录；旧版本忽略新表，也不再呈现到期提醒，不应继续把旧判断当作有效信号。禁止为了回滚删除投资记录。
+
+本机测试不能替代 Windows 正式服务的模型连通性、真实新闻采集、券商账单与档案一致性验收；未验证上述项目时，不应宣称生产闭环通过。
 
 ### 期初持仓与资金分层
 
@@ -109,6 +160,21 @@
 ```
 
 场外基金 `021514` 与 `512890` 不应放在同一个匹配目标中。前者若尚未录入持仓账本，会继续作为手工资产管理；录入后会出现在 `unassigned_positions`，等待结合赎回费、净值和退出条件单独处理。
+
+## 新增战术仓测算 / Tactical lot preview
+
+持仓页新增独立测算卡，API 为 `POST /api/v1/portfolio/tactical-research/preview`。原战略配置引擎继续计算目标缺口，不移除其预算保护；战术预览不读取目标缺口或原仓成本，所以达到目标比例不会直接阻断战术研究。这不是自动趋势择时引擎，也不修改战略比例。
+
+- 用户显式填写：扣除生活备用金、核心长期预算、其他订单/方案后同一批共用的已结算美元现金与核实时间、每笔新增本金的损失承受极限，以及最多十笔候选的新增本金、计划损失比例、双边所有费用/价差/滑点估计、依据和失效条件。不会默认填入历史现金、止损比例或券商购买力。
+- 现金时间必须含时区，超过 24 小时或未来时间要求复核；即使时点有效，也只是用户输入，不是券商核验。
+- 合计现金占用 = 各笔新增本金 + 各笔全往返成本预留，保守地提前留出退出费用。同一笔可用现金不能给每个标的单独重复分配；未知费用保留未知，不当作 0。多个页面/多次预览不会互相预留额度，实际执行前仍需通过现有资金账本核对。
+- 单笔计划损失 = 新增本金 × 逻辑失效计划损失比例 + 往返成本；承受金额 = 该笔新增本金 × 承受极限。40% 是用户可能选择的极端承受水平，不是默认止损，不作用于原底仓，更不保证实际亏损封顶。逻辑失效可更早退出，跳空和滑点可能超过计划。
+- 返回 `scenario_only` 仅表示资金算术通过；全部响应 `executable=false`，不核验实时行情、账户规则、组合集中度，不给股数或买卖指令，不写账本、预算、成交、现金确认或订单。失败返回 `needs_revision` 与明确原因。修改输入后清除旧结果，过时异步结果不展示。
+- 新增仓和旧底仓必须在真实成交确认后按批次区分。均价下降不等于净收益，单纯预览不能宣称已降本。战术策略的实盘信号与绩效验证仍是后续工作，不把该计算器宣称为自动买点推荐。
+
+English: The stateless tactical preview is separate from strategic target-gap allocation. Inputs are user-reported free settled cash, timestamp, new-lot capital, planned loss, tolerance, all-in costs and thesis/invalidation. All lots share one cash pool; unknown costs remain unknown. Tolerance is measured on each NEW lot, never the original core or total account, and is not a default stop or a guaranteed loss cap. Every response is non-executable. No quotes, broker validation, concentration evaluation, reservations or ledger writes occur. Editing inputs invalidates results.
+
+API 为追加接口，无数据库变更、无新环境配置；前后端须一起部署。回滚仅移除此接口和页面卡，不更改持仓/预算。此专题无独立英文文档，本节及网页标签同步提供英文语义。
 
 ## 数据边界
 

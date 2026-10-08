@@ -22,7 +22,9 @@ from api.v1.endpoints import (
     health,
     history,
     intelligence,
+    market_events,
     portfolio,
+    paper_observations,
     stocks,
     system_config,
     usage,
@@ -31,6 +33,8 @@ from api.v1.endpoints import (
 # 创建 v1 版本主路由。
 # /api/v1 前缀在 api.app 挂载，避免新版 FastAPI 误判子路由 "" 为 empty path。
 router = APIRouter()
+
+router.include_router(market_events.router, prefix="/market-events", tags=["MarketEvents"])
 
 router.include_router(
     auth.router,
@@ -97,6 +101,8 @@ router.include_router(
     prefix="/decision-signals",
     tags=["DecisionSignals"]
 )
+
+router.include_router(paper_observations.router, prefix="/paper-observations", tags=["PaperObservations"])
 
 router.include_router(
     screening.router,

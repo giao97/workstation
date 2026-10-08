@@ -8,6 +8,10 @@ import type { DecisionSignalItem } from '../../types/decisionSignals';
 import { UI_LANGUAGE_STORAGE_KEY } from '../../utils/uiLanguage';
 import PortfolioPage from '../PortfolioPage';
 
+vi.mock('../../api/etfExposure', () => ({ etfExposureApi: {
+  report: vi.fn().mockRejectedValue(new Error('Composition data unavailable in this portfolio fixture')),
+} }));
+
 const {
   getAccounts,
   getSnapshot,

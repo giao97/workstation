@@ -16,6 +16,15 @@ class PortfolioAllocationRepository:
     def __init__(self, db_manager: Optional[DatabaseManager] = None):
         self.db = db_manager or DatabaseManager.get_instance()
 
+    def core_entry_daily_bars(self, symbol, start_date, end_date):
+        """Existing cache only; never populate synthetic or future prices."""
+        from src.storage import StockDaily
+        with self.db.get_session() as session:
+            rows = session.scalars(select(StockDaily).where(
+                StockDaily.code == symbol, StockDaily.date >= start_date,
+                StockDaily.date <= end_date).order_by(StockDaily.date)).all()
+            return [dict(date=row.date, close=row.close, source=row.data_source) for row in rows]
+
     def create_plan(
         self,
         *,
